@@ -6,6 +6,7 @@ on:
       - main
       - dev
       - next
+      - fix/next
     paths:
       - 'backend/**'
       - 'pyproject.toml'
@@ -15,6 +16,7 @@ on:
       - main
       - dev
       - next
+      - fix/next
     paths:
       - 'backend/**'
       - 'pyproject.toml'
