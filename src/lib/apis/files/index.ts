@@ -60,10 +60,18 @@ export const uploadDir = async (token: string) => {
 	return res;
 };
 
-export const getFiles = async (token: string = '') => {
+export const getFiles = async (token: string = '', chatId?: string, generatedBy?: string) => {
 	let error = null;
 
-	const res = await fetch(`${WEBUI_API_BASE_URL}/files/`, {
+	// Build query parameters for filtering
+	const params = new URLSearchParams();
+	if (chatId) params.append('chat_id', chatId);
+	if (generatedBy) params.append('generated_by', generatedBy);
+
+	const queryString = params.toString();
+	const url = `${WEBUI_API_BASE_URL}/files/${queryString ? '?' + queryString : ''}`;
+
+	const res = await fetch(url, {
 		method: 'GET',
 		headers: {
 			Accept: 'application/json',
@@ -246,119 +254,11 @@ export const deleteAllFiles = async (token: string) => {
 	return res;
 };
 
-export const downloadCodeGeneratedFile = async (token: string, fileId: string) => {
-	let error = null;
-
-	const res = await fetch(`${WEBUI_API_BASE_URL}/files/code-generated/${fileId}/download`, {
-		method: 'GET',
-		headers: {
-			authorization: `Bearer ${token}`
-		}
-	})
-		.then(async (res) => {
-			if (!res.ok) throw await res.json();
-			return res;
-		})
-		.catch((err) => {
-			error = err.detail;
-			console.error(err);
-			return null;
-		});
-
-	if (error) {
-		throw error;
-	}
-
-	// If successful, trigger download
-	if (res) {
-		const blob = await res.blob();
-		const contentDisposition = res.headers.get('Content-Disposition');
-		let filename = 'downloaded_file';
-
-		if (contentDisposition) {
-			const filenameMatch = contentDisposition.match(/filename\*=UTF-8''([^;]+)/);
-			if (filenameMatch) {
-				filename = decodeURIComponent(filenameMatch[1]);
-			}
-		}
-
-		const url = window.URL.createObjectURL(blob);
-		const a = document.createElement('a');
-		a.href = url;
-		a.download = filename;
-		document.body.appendChild(a);
-		a.click();
-		window.URL.revokeObjectURL(url);
-		document.body.removeChild(a);
-	}
-
-	return res;
-};
-
-export const getCodeGeneratedFiles = async (token: string, chatId: string) => {
-	let error = null;
-
-	const res = await fetch(`${WEBUI_API_BASE_URL}/files/code-generated/${chatId}/files`, {
-		method: 'GET',
-		headers: {
-			Accept: 'application/json',
-			'Content-Type': 'application/json',
-			authorization: `Bearer ${token}`
-		}
-	})
-		.then(async (res) => {
-			if (!res.ok) throw await res.json();
-			return res.json();
-		})
-		.catch((err) => {
-			error = err.detail;
-			console.error(err);
-			return null;
-		});
-
-	if (error) {
-		throw error;
-	}
-
-	return res;
-};
-
-export const getDownloadableFiles = async (token: string, chatId: string = '') => {
-	let error = null;
-
-	const endpoint = chatId
-		? `${WEBUI_API_BASE_URL}/files/downloadable?chat_id=${chatId}`
-		: `${WEBUI_API_BASE_URL}/files/downloadable`;
-
-	const res = await fetch(endpoint, {
-		method: 'GET',
-		headers: {
-			Accept: 'application/json',
-			'Content-Type': 'application/json',
-			authorization: `Bearer ${token}`
-		}
-	})
-		.then(async (res) => {
-			if (!res.ok) throw await res.json();
-			return res.json();
-		})
-		.catch((err) => {
-			error = err.detail;
-			console.error(err);
-			return null;
-		});
-
-	if (error) {
-		throw error;
-	}
-
-	return res;
-};
-
+// Simplified function that uses existing file download system
 export const downloadFileById = async (token: string, fileId: string, filename?: string) => {
 	let error = null;
 
-	const res = await fetch(`${WEBUI_API_BASE_URL}/files/${fileId}/download`, {
+	const res = await fetch(`${WEBUI_API_BASE_URL}/files/${fileId}/content?attachment=true`, {
 		method: 'GET',
 		headers: {
 			authorization: `Bearer ${token}`
@@ -382,8 +282,9 @@ export const downloadFileById = async (token: string, fileId: string, filename?:
 	if (res) {
 		const blob = await res.blob();
 		const contentDisposition = res.headers.get('Content-Disposition');
-		let downloadFilename = filename || 'downloaded_file';
+		let downloadFilename = filename; // Use provided filename if available
 
+		// Extract filename from Content-Disposition header (backend should provide this)
 		if (contentDisposition) {
 			const filenameMatch = contentDisposition.match(/filename\*=UTF-8''([^;]+)/);
 			if (filenameMatch) {
@@ -394,6 +295,12 @@ export const downloadFileById = async (token: string, fileId: string, filename?:
 					downloadFilename = simpleFilenameMatch[1];
 				}
 			}
+		}
+
+		// Fallback to file ID if no filename found anywhere
+		if (!downloadFilename) {
+			downloadFilename = `file_${fileId}`;
+			console.warn(`No filename found for file ${fileId}, using fallback: ${downloadFilename}`);
 		}
 
 		const url = window.URL.createObjectURL(blob);
@@ -407,4 +314,41 @@ export const downloadFileById = async (token: string, fileId: string, filename?:
 	}
 
 	return res;
+};
+
+// Convenience functions using the enhanced getFiles function
+export const getCodeGeneratedFiles = async (token: string, chatId: string) => {
+	return getFiles(token, chatId, 'code_interpreter');
+};
+
+export const getDownloadableFiles = async (token: string, chatId?: string) => {
+	// Get files with downloadable extensions
+	const files = await getFiles(token, chatId);
+	if (!files) return null;
+
+	const downloadableExtensions = [
+		'.xlsx',
+		'.xls',
+		'.csv',
+		'.pdf',
+		'.png',
+		'.jpg',
+		'.jpeg',
+		'.gif',
+		'.txt',
+		'.json'
+	];
+	return files.filter((file: any) => {
+		const filename = file.filename || file.meta?.name || '';
+		return downloadableExtensions.some((ext) => filename.toLowerCase().endsWith(ext));
+	});
+};
+
+// Use existing download function for code-generated files
+export const downloadCodeGeneratedFile = async (
+	token: string,
+	fileId: string,
+	filename?: string
+) => {
+	return downloadFileById(token, fileId, filename);
 };

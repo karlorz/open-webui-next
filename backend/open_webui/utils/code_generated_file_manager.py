@@ -9,7 +9,7 @@ log = logging.getLogger(__name__)
 
 
 class CodeGeneratedFileManager:
-    """Manages tracking and registration of files generated during code execution"""
+    """Simplified manager for tracking and registering files generated during code execution"""
 
     TRACKED_EXTENSIONS = {".xlsx", ".xls", ".csv", ".pdf"}
 
@@ -121,10 +121,13 @@ class CodeGeneratedFileManager:
         return generated
 
     def register_files_to_storage(self, file_list: List[Dict]) -> List[Optional[str]]:
-        """Register generated files in the system for download"""
+        """Register generated files using the existing Files model for unified storage"""
         if not file_list:
             log.info(f"No files to register for chat {self.chat_id}")
             return []
+
+        # Import Storage here to avoid circular imports
+        from open_webui.storage.provider import Storage
 
         registered_file_ids = []
 
@@ -140,25 +143,41 @@ class CodeGeneratedFileManager:
                 # Generate unique file ID
                 file_id = str(uuid.uuid4())
 
-                # Create FileForm with correct structure
+                # Create a unique storage filename to avoid conflicts
+                storage_filename = f"{file_id}_{file_name}"
+
+                # Upload the file to proper Storage system
+                tags = {
+                    "OpenWebUI-File-Id": file_id,
+                    "OpenWebUI-Generated-By": "code_interpreter",
+                    "OpenWebUI-Chat-Id": self.chat_id,
+                }
+
+                with open(full_path, "rb") as file_obj:
+                    contents, storage_path = Storage.upload_file(
+                        file_obj, storage_filename, tags
+                    )
+
+                # Create FileForm with proper storage path
                 form_data = FileForm(
                     id=file_id,
-                    filename=file_name,
-                    path=full_path,  # Store the full path for access
+                    filename=file_name,  # Keep original filename for display
+                    path=storage_path,  # Use storage path, not workspace path
                     data={},
                     meta={
-                        "name": file_name,
+                        "name": file_name,  # Original filename for Content-Disposition
                         "content_type": self._get_content_type(file_info["format"]),
                         "size": file_info["size"],
-                        "chat_id": self.chat_id,
-                        "generated_by": "code_interpreter",
+                        "chat_id": self.chat_id,  # Enable filtering by chat
+                        "generated_by": "code_interpreter",  # Enable filtering by generator
                         "generated_at": file_info["generated_at"],
                         "format": file_info["format"],
+                        "file_type": "generated",  # Additional categorization
                     },
                     access_control=None,
                 )
 
-                # Register file in the Files model
+                # Register file using existing Files model infrastructure
                 result = Files.insert_new_file(
                     user_id=self.user_id, form_data=form_data
                 )
@@ -166,11 +185,8 @@ class CodeGeneratedFileManager:
                 if result:
                     registered_file_ids.append(file_id)
                     log.info(
-                        f"✓ Successfully registered file: {file_name} as ID {file_id}"
+                        f"✓ Successfully registered file: {file_name} as ID {file_id} (uploaded to Storage and queryable via standard Files API)"
                     )
-
-                    # Store metadata linking file to chat
-                    self._store_chat_file_metadata(file_id, file_info)
                 else:
                     log.error(
                         f"✗ Failed to register file: {file_name} - insert_new_file returned None"
@@ -185,7 +201,7 @@ class CodeGeneratedFileManager:
 
         successful_registrations = len([fid for fid in registered_file_ids if fid])
         log.info(
-            f"File registration complete: {successful_registrations}/{len(file_list)} files registered successfully"
+            f"File registration complete: {successful_registrations}/{len(file_list)} files registered successfully and available via /files/ API"
         )
         return registered_file_ids
 
@@ -198,19 +214,3 @@ class CodeGeneratedFileManager:
             ".pdf": "application/pdf",
         }
         return content_types.get(extension.lower(), "application/octet-stream")
-
-    def _store_chat_file_metadata(self, file_id: str, file_info: Dict):
-        """Store metadata linking generated file to chat"""
-        try:
-            # This could be stored in a separate table or as metadata
-            # For now, we'll use the chat system to store the relationship
-            metadata = {
-                "type": "generated_file",
-                "file_id": file_id,
-                "chat_id": self.chat_id,
-                "file_info": file_info,
-                "generated_by": "code_interpreter",
-            }
-            log.debug(f"Stored metadata for generated file {file_id}: {metadata}")
-        except Exception as e:
-            log.error(f"Error storing metadata for file {file_id}: {e}")

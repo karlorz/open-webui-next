@@ -41,19 +41,15 @@
 		downloadingFiles = downloadingFiles; // Trigger reactivity
 
 		try {
-			if (file.type === 'downloadable' && file.id) {
-				await downloadCodeGeneratedFile(localStorage.token, file.id);
+			// Always use the unified API server for all downloads, pass the filename
+			if (file.id) {
+				await downloadCodeGeneratedFile(localStorage.token, file.id, file.name);
 				toast.success($i18n.t('Downloaded {{fileName}}', { fileName: file.name }));
-			} else if (file.url) {
-				// Handle direct URL downloads
-				const link = document.createElement('a');
-				link.href = file.url;
-				link.download = file.name;
-				link.target = '_blank';
-				document.body.appendChild(link);
-				link.click();
-				document.body.removeChild(link);
-				toast.success($i18n.t('Downloaded {{fileName}}', { fileName: file.name }));
+			} else {
+				// Fallback warning for files without proper ID
+				console.warn('File missing ID, cannot download via API:', file);
+				toast.error($i18n.t('Cannot download file: Missing file ID'));
+				return;
 			}
 
 			dispatch('downloaded', file);
