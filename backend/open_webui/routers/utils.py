@@ -64,6 +64,7 @@ async def execute_code(
             ),
             request.app.state.config.CODE_EXECUTION_JUPYTER_TIMEOUT,
             form_data.chat_id,  # Pass chat_id to the enhanced function
+            user_id=user.id,  # Pass user_id for file tracking
         )
 
         return output

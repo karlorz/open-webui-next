@@ -3,6 +3,7 @@ import json
 import logging
 import os
 import uuid
+import shutil
 from typing import Optional, List, Dict, Any
 
 import aiohttp
@@ -15,8 +16,101 @@ from open_webui.env import SRC_LOG_LEVELS
 from open_webui.models.chats import Chats
 from open_webui.models.files import Files
 
+# Import the file manager class
+from open_webui.utils.code_generated_file_manager import CodeGeneratedFileManager
+
 logger = logging.getLogger(__name__)
 logger.setLevel(SRC_LOG_LEVELS["MAIN"])
+
+
+def generate_dynamic_code_interpreter_prompt(
+    base_prompt: str,
+    attached_files: List[Dict[str, Any]] = None,
+    chat_id: str = "",
+) -> str:
+    """
+    Generate a dynamic code interpreter prompt that includes information about attached files.
+
+    Args:
+        base_prompt: The base code interpreter prompt template
+        attached_files: List of file metadata dictionaries
+        chat_id: Chat ID for context
+
+    Returns:
+        Enhanced prompt string with file information
+    """
+    if not attached_files:
+        # No files attached, return the base prompt
+        return base_prompt
+
+    # Build file information section
+    file_info_lines = []
+    file_info_lines.append("\n#### Available Files")
+    file_info_lines.append(
+        "The following files are available in your `/mnt/data` directory:"
+    )
+
+    for file_info in attached_files:
+        file_name = file_info.get("name", "unknown_file")
+        file_type = file_info.get("type", "file")
+        file_size = file_info.get("size")
+
+        # Format file information
+        if file_size:
+            if file_size > 1024 * 1024:  # > 1MB
+                size_str = f" ({file_size / (1024 * 1024):.1f} MB)"
+            elif file_size > 1024:  # > 1KB
+                size_str = f" ({file_size / 1024:.1f} KB)"
+            else:
+                size_str = f" ({file_size} bytes)"
+        else:
+            size_str = ""
+
+        file_info_lines.append(f"- `{file_name}`{size_str}")
+
+    file_info_lines.append("")
+    file_info_lines.append(
+        "You can access these files directly using their filenames in `/mnt/data/`. For example:"
+    )
+    file_info_lines.append("```python")
+    file_info_lines.append("import pandas as pd")
+
+    # Add example based on first file
+    if attached_files:
+        first_file = attached_files[0].get("name", "data.csv")
+        file_ext = os.path.splitext(first_file)[1].lower()
+
+        if file_ext in [".csv"]:
+            file_info_lines.append(f"df = pd.read_csv('/mnt/data/{first_file}')")
+        elif file_ext in [".xlsx", ".xls"]:
+            file_info_lines.append(f"df = pd.read_excel('/mnt/data/{first_file}')")
+        elif file_ext in [".json"]:
+            file_info_lines.append(f"import json")
+            file_info_lines.append(f"with open('/mnt/data/{first_file}', 'r') as f:")
+            file_info_lines.append(f"    data = json.load(f)")
+        else:
+            file_info_lines.append(f"# Process {first_file}")
+            file_info_lines.append(f"with open('/mnt/data/{first_file}', 'r') as f:")
+            file_info_lines.append(f"    content = f.read()")
+
+    file_info_lines.append("```")
+    file_info_lines.append("")
+
+    # Enhanced saving instruction based on the focused approach from the documentation
+    file_info_lines.append(
+        "**Important**: Save and persist output only if the user requests the format in Excel, CSV, or PDF file formats in the '/mnt/data' directory."
+    )
+
+    file_info_section = "\n".join(file_info_lines)
+
+    # Combine base prompt with file information
+    enhanced_prompt = base_prompt + file_info_section
+
+    logger.debug(
+        f"Generated dynamic code interpreter prompt for chat {chat_id} with {len(attached_files)} files"
+    )
+
+    return enhanced_prompt
 
 
 def get_attached_files_from_chat(chat_id: str) -> List[Dict[str, Any]]:
@@ -111,11 +205,9 @@ async def auto_prepare_chat_files(
         os.makedirs(chat_data_dir, exist_ok=True)
         logger.info(f"Created/verified chat data directory: {chat_data_dir}")
 
-        # Test which method to use: symlink or copy
         # Force copy method for Docker compatibility - symlinks often fail in bind volumes
         use_symlinks = False
-        # use_symlinks = await _test_symlink_accessibility(chat_data_dir, data_dir)
-        method = "symlink" if use_symlinks else "copy"
+        method = "copy"
         result["method"] = method
         logger.info(
             f"Using {method} method for file preparation (hardcoded for Docker compatibility)"
@@ -177,20 +269,9 @@ async def auto_prepare_chat_files(
                         os.remove(target_path)
                         logger.debug(f"Removed existing file: {target_path}")
 
-                # Prepare file using the appropriate method
-                if use_symlinks:
-                    # Create symbolic link using absolute path to ensure it resolves correctly
-                    source_file_path_abs = os.path.abspath(source_file_path)
-                    os.symlink(source_file_path_abs, target_path)
-                    logger.info(
-                        f"Created symlink: {target_path} -> {source_file_path_abs}"
-                    )
-                else:
-                    # Copy file
-                    import shutil
-
-                    shutil.copy2(source_file_path, target_path)
-                    logger.info(f"Copied file: {source_file_path} -> {target_path}")
+                # Copy file
+                shutil.copy2(source_file_path, target_path)
+                logger.info(f"Copied file: {source_file_path} -> {target_path}")
 
                 # Record successful preparation
                 result["prepared_files"].append(
@@ -234,300 +315,6 @@ async def auto_prepare_chat_files(
         return result
 
 
-async def _test_symlink_accessibility(chat_data_dir: str, data_dir: str) -> bool:
-    """
-    Test whether symlinks will work in the target environment.
-    This is especially important for Docker environments where symlinks may not be accessible.
-
-    Args:
-        chat_data_dir: The directory where files will be prepared
-        data_dir: The base data directory
-
-    Returns:
-        True if symlinks should be used, False if files should be copied
-    """
-    test_dir = os.path.join(chat_data_dir, ".test_symlink")
-    test_source = None
-    test_symlink = None
-
-    try:
-        # Create test directory
-        os.makedirs(test_dir, exist_ok=True)
-
-        # Ensure uploads directory exists for source file
-        uploads_dir = os.path.join(data_dir, "uploads")
-        os.makedirs(uploads_dir, exist_ok=True)
-
-        # Create a test source file in the uploads directory
-        test_source = os.path.join(uploads_dir, ".test_source_file")
-        with open(test_source, "w") as f:
-            f.write("test_content_for_symlink_detection")
-
-        # Create test symlink using absolute path to ensure it resolves correctly
-        test_symlink = os.path.join(test_dir, "test_symlink")
-        test_source_abs = os.path.abspath(test_source)
-        os.symlink(test_source_abs, test_symlink)
-
-        # Test 1: Can we create the symlink?
-        if not os.path.islink(test_symlink):
-            logger.warning("Symlink creation test failed - file is not a symlink")
-            return False
-
-        # Test 2: Can we read through the symlink?
-        try:
-            with open(test_symlink, "r") as f:
-                content = f.read()
-            if content != "test_content_for_symlink_detection":
-                logger.warning("Symlink accessibility test failed - content mismatch")
-                return False
-        except Exception as e:
-            logger.warning(
-                f"Symlink accessibility test failed - cannot read through symlink: {e}"
-            )
-            return False
-
-        # Test 3: Can we stat the symlink target?
-        try:
-            stat_result = os.stat(test_symlink)
-            if not stat_result:
-                logger.warning("Symlink stat test failed")
-                return False
-        except Exception as e:
-            logger.warning(f"Symlink stat test failed: {e}")
-            return False
-
-        logger.info("Symlink accessibility test passed - using symlinks")
-        return True
-
-    except OSError as e:
-        if "Operation not supported" in str(e) or "Function not implemented" in str(e):
-            logger.info(
-                "Symlinks not supported on this filesystem - using file copying"
-            )
-        else:
-            logger.warning(
-                f"Symlink test failed with OS error: {e} - using file copying"
-            )
-        return False
-    except Exception as e:
-        logger.warning(f"Symlink test failed: {e} - using file copying")
-        return False
-    finally:
-        # Clean up test files
-        try:
-            if test_symlink and (
-                os.path.exists(test_symlink) or os.path.islink(test_symlink)
-            ):
-                os.unlink(test_symlink)
-            if test_source and os.path.exists(test_source):
-                os.remove(test_source)
-            if os.path.exists(test_dir):
-                os.rmdir(test_dir)
-        except Exception as e:
-            logger.debug(f"Test cleanup failed (non-critical): {e}")
-
-
-async def prepare_multiple_chats_files(
-    chat_ids: List[str], data_dir: str = "data"
-) -> Dict[str, Any]:
-    """
-    Prepare files for multiple chats at once (bulk operation).
-
-    Args:
-        chat_ids: List of chat IDs to prepare files for
-        data_dir: Base data directory (default: "data")
-
-    Returns:
-        Dictionary with overall results and per-chat results
-    """
-    logger.info(f"Bulk preparing files for {len(chat_ids)} chats")
-
-    overall_result = {
-        "success": True,
-        "total_chats": len(chat_ids),
-        "successful_chats": 0,
-        "failed_chats": 0,
-        "chat_results": {},
-        "summary": {
-            "total_prepared_files": 0,
-            "total_skipped_files": 0,
-            "total_errors": 0,
-        },
-    }
-
-    for chat_id in chat_ids:
-        try:
-            chat_result = await auto_prepare_chat_files(chat_id, data_dir)
-            overall_result["chat_results"][chat_id] = chat_result
-
-            if chat_result["success"]:
-                overall_result["successful_chats"] += 1
-            else:
-                overall_result["failed_chats"] += 1
-                overall_result["success"] = False
-
-            # Update summary
-            overall_result["summary"]["total_prepared_files"] += len(
-                chat_result["prepared_files"]
-            )
-            overall_result["summary"]["total_skipped_files"] += len(
-                chat_result["skipped_files"]
-            )
-            overall_result["summary"]["total_errors"] += len(chat_result["errors"])
-
-        except Exception as e:
-            error_msg = f"Failed to prepare chat {chat_id}: {str(e)}"
-            logger.error(error_msg)
-            overall_result["chat_results"][chat_id] = {
-                "success": False,
-                "errors": [error_msg],
-            }
-            overall_result["failed_chats"] += 1
-            overall_result["success"] = False
-
-    logger.info(
-        f"Bulk prepare completed: {overall_result['successful_chats']}/{overall_result['total_chats']} successful"
-    )
-    return overall_result
-
-
-def test_filesystem_support(data_dir: str = "data") -> Dict[str, Any]:
-    """
-    Test filesystem support for symlinks and file operations.
-    Helps identify permission problems and symlink support issues.
-
-    Args:
-        data_dir: Base data directory to test in
-
-    Returns:
-        Dictionary with test results
-    """
-    logger.info(f"Testing filesystem support in {data_dir}")
-
-    test_result = {"success": True, "tests": {}, "errors": [], "recommendations": []}
-
-    test_dir = os.path.join(data_dir, "test_auto_prepare")
-
-    try:
-        # Test 1: Directory creation
-        try:
-            os.makedirs(test_dir, exist_ok=True)
-            test_result["tests"]["directory_creation"] = True
-            logger.debug("✓ Directory creation test passed")
-        except Exception as e:
-            test_result["tests"]["directory_creation"] = False
-            test_result["errors"].append(f"Directory creation failed: {str(e)}")
-            test_result["success"] = False
-
-        # Test 2: File creation
-        test_file = os.path.join(test_dir, "test_file.txt")
-        try:
-            with open(test_file, "w") as f:
-                f.write("test content")
-            test_result["tests"]["file_creation"] = True
-            logger.debug("✓ File creation test passed")
-        except Exception as e:
-            test_result["tests"]["file_creation"] = False
-            test_result["errors"].append(f"File creation failed: {str(e)}")
-            test_result["success"] = False
-
-        # Test 3: Symlink creation
-        test_symlink = os.path.join(test_dir, "test_symlink.txt")
-        try:
-            if os.path.exists(test_file):
-                # Use absolute path for symlink target to ensure it resolves correctly
-                test_file_abs = os.path.abspath(test_file)
-                os.symlink(test_file_abs, test_symlink)
-                test_result["tests"]["symlink_creation"] = True
-                logger.debug("✓ Symlink creation test passed")
-            else:
-                test_result["tests"]["symlink_creation"] = False
-                test_result["errors"].append(
-                    "Cannot test symlink: source file doesn't exist"
-                )
-        except Exception as e:
-            test_result["tests"]["symlink_creation"] = False
-            test_result["errors"].append(f"Symlink creation failed: {str(e)}")
-            test_result["success"] = False
-            if "Operation not permitted" in str(e) or "not supported" in str(e).lower():
-                test_result["recommendations"].append(
-                    "Filesystem may not support symlinks. Consider using file copies instead."
-                )
-
-        # Test 4: Path resolution
-        try:
-            if os.path.exists(test_symlink):
-                resolved_path = os.path.realpath(test_symlink)
-                if resolved_path == os.path.realpath(test_file):
-                    test_result["tests"]["path_resolution"] = True
-                    logger.debug("✓ Path resolution test passed")
-                else:
-                    test_result["tests"]["path_resolution"] = False
-                    test_result["errors"].append("Symlink path resolution incorrect")
-            else:
-                test_result["tests"]["path_resolution"] = False
-                test_result["errors"].append(
-                    "Cannot test path resolution: symlink doesn't exist"
-                )
-        except Exception as e:
-            test_result["tests"]["path_resolution"] = False
-            test_result["errors"].append(f"Path resolution test failed: {str(e)}")
-
-        # Test 5: Docker symlink accessibility (new test)
-        if test_result["tests"].get("symlink_creation", False):
-            try:
-                # Test if we can read the symlink (this often fails in Docker environments)
-                with open(test_symlink, "r") as f:
-                    content = f.read()
-                if content == "test content":
-                    test_result["tests"]["symlink_accessibility"] = True
-                    logger.debug("✓ Symlink accessibility test passed")
-                else:
-                    test_result["tests"]["symlink_accessibility"] = False
-                    test_result["errors"].append(
-                        "Symlink content mismatch - possible Docker volume issue"
-                    )
-                    test_result["recommendations"].append(
-                        "Symlinks may not work in Docker environment. Auto-prepare will use file copying."
-                    )
-            except Exception as e:
-                test_result["tests"]["symlink_accessibility"] = False
-                test_result["errors"].append(f"Symlink accessibility failed: {str(e)}")
-                test_result["recommendations"].append(
-                    "Symlinks not accessible - likely Docker environment. Auto-prepare will use file copying."
-                )
-        else:
-            test_result["tests"]["symlink_accessibility"] = False
-
-    finally:
-        # Cleanup test files
-        try:
-            if os.path.exists(test_symlink) or os.path.islink(test_symlink):
-                os.unlink(test_symlink)
-            if os.path.exists(test_file):
-                os.unlink(test_file)
-            if os.path.exists(test_dir):
-                os.rmdir(test_dir)
-            logger.debug("✓ Test cleanup completed")
-        except Exception as e:
-            logger.warning(f"Test cleanup failed: {str(e)}")
-
-    # Add recommendations based on test results
-    if not test_result["tests"].get("symlink_creation", False):
-        test_result["recommendations"].append(
-            "Consider implementing file copying as fallback for symlink failures"
-        )
-
-    if test_result["success"]:
-        logger.info("✓ All filesystem tests passed")
-    else:
-        logger.warning(
-            f"⚠ Some filesystem tests failed: {len(test_result['errors'])} errors"
-        )
-
-    return test_result
-
-
 class ResultModel(BaseModel):
     """
     Execute Code Result Model
@@ -536,182 +323,7 @@ class ResultModel(BaseModel):
     stdout: Optional[str] = ""
     stderr: Optional[str] = ""
     result: Optional[str] = ""
-
-
-class JupyterCodeExecuter:
-    """
-    Execute code in jupyter notebook
-    """
-
-    def __init__(
-        self,
-        base_url: str,
-        code: str,
-        token: str = "",
-        password: str = "",
-        timeout: int = 60,
-    ):
-        """
-        :param base_url: Jupyter server URL (e.g., "http://localhost:8888")
-        :param code: Code to execute
-        :param token: Jupyter authentication token (optional)
-        :param password: Jupyter password (optional)
-        :param timeout: WebSocket timeout in seconds (default: 60s)
-        """
-        self.base_url = base_url
-        self.code = code
-        self.token = token
-        self.password = password
-        self.timeout = timeout
-        self.kernel_id = ""
-        if self.base_url[-1] != "/":
-            self.base_url += "/"
-        self.session = aiohttp.ClientSession(trust_env=True, base_url=self.base_url)
-        self.params = {}
-        self.result = ResultModel()
-
-    async def __aenter__(self):
-        return self
-
-    async def __aexit__(self, exc_type, exc_val, exc_tb):
-        if self.kernel_id:
-            try:
-                async with self.session.delete(
-                    f"api/kernels/{self.kernel_id}", params=self.params
-                ) as response:
-                    response.raise_for_status()
-            except Exception as err:
-                logger.exception("close kernel failed, %s", err)
-        await self.session.close()
-
-    async def run(self) -> ResultModel:
-        try:
-            await self.sign_in()
-            await self.init_kernel()
-            await self.execute_code()
-        except Exception as err:
-            logger.exception("execute code failed, %s", err)
-            self.result.stderr = f"Error: {err}"
-        return self.result
-
-    async def sign_in(self) -> None:
-        # password authentication
-        if self.password and not self.token:
-            async with self.session.get("login") as response:
-                response.raise_for_status()
-                xsrf_token = response.cookies["_xsrf"].value
-                if not xsrf_token:
-                    raise ValueError("_xsrf token not found")
-                self.session.cookie_jar.update_cookies(response.cookies)
-                self.session.headers.update({"X-XSRFToken": xsrf_token})
-            async with self.session.post(
-                "login",
-                data={"_xsrf": xsrf_token, "password": self.password},
-                allow_redirects=False,
-            ) as response:
-                response.raise_for_status()
-                self.session.cookie_jar.update_cookies(response.cookies)
-
-        # token authentication
-        if self.token:
-            self.params.update({"token": self.token})
-
-    async def init_kernel(self) -> None:
-        async with self.session.post(url="api/kernels", params=self.params) as response:
-            response.raise_for_status()
-            kernel_data = await response.json()
-            self.kernel_id = kernel_data["id"]
-
-    def init_ws(self) -> tuple[str, dict]:
-        ws_base = self.base_url.replace("http", "ws", 1)
-        ws_params = "?" + "&".join([f"{key}={val}" for key, val in self.params.items()])
-        websocket_url = f"{ws_base}api/kernels/{self.kernel_id}/channels{ws_params if len(ws_params) > 1 else ''}"
-        ws_headers = {}
-        if self.password and not self.token:
-            ws_headers = {
-                "Cookie": "; ".join(
-                    [
-                        f"{cookie.key}={cookie.value}"
-                        for cookie in self.session.cookie_jar
-                    ]
-                ),
-                **self.session.headers,
-            }
-        return websocket_url, ws_headers
-
-    async def execute_code(self) -> None:
-        # initialize ws
-        websocket_url, ws_headers = self.init_ws()
-        # execute
-        async with websockets.connect(
-            websocket_url, additional_headers=ws_headers
-        ) as ws:
-            await self.execute_in_jupyter(ws)
-
-    async def execute_in_jupyter(self, ws) -> None:
-        # send message
-        msg_id = uuid.uuid4().hex
-        await ws.send(
-            json.dumps(
-                {
-                    "header": {
-                        "msg_id": msg_id,
-                        "msg_type": "execute_request",
-                        "username": "user",
-                        "session": uuid.uuid4().hex,
-                        "date": "",
-                        "version": "5.3",
-                    },
-                    "parent_header": {},
-                    "metadata": {},
-                    "content": {
-                        "code": self.code,
-                        "silent": False,
-                        "store_history": True,
-                        "user_expressions": {},
-                        "allow_stdin": False,
-                        "stop_on_error": True,
-                    },
-                    "channel": "shell",
-                }
-            )
-        )
-        # parse message
-        stdout, stderr, result = "", "", []
-        while True:
-            try:
-                # wait for message
-                message = await asyncio.wait_for(ws.recv(), self.timeout)
-                message_data = json.loads(message)
-                # msg id not match, skip
-                if message_data.get("parent_header", {}).get("msg_id") != msg_id:
-                    continue
-                # check message type
-                msg_type = message_data.get("msg_type")
-                match msg_type:
-                    case "stream":
-                        if message_data["content"]["name"] == "stdout":
-                            stdout += message_data["content"]["text"]
-                        elif message_data["content"]["name"] == "stderr":
-                            stderr += message_data["content"]["text"]
-                    case "execute_result" | "display_data":
-                        data = message_data["content"]["data"]
-                        if "image/png" in data:
-                            result.append(f"data:image/png;base64,{data['image/png']}")
-                        elif "text/plain" in data:
-                            result.append(data["text/plain"])
-                    case "error":
-                        stderr += "\n".join(message_data["content"]["traceback"])
-                    case "status":
-                        if message_data["content"]["execution_state"] == "idle":
-                            break
-
-            except asyncio.TimeoutError:
-                stderr += "\nExecution timed out."
-                break
-        self.result.stdout = stdout.strip()
-        self.result.stderr = stderr.strip()
-        self.result.result = "\n".join(result).strip() if result else ""
+    files: Optional[List[Dict]] = []  # Add files attribute for generated files
 
 
 class EnterpriseGatewayCodeExecutor:
@@ -730,7 +342,8 @@ class EnterpriseGatewayCodeExecutor:
         username: str = "code-interpreter",
         chat_id: str = "",
         data_dir: str = "data",
-        kernel_init_code: str = "",  # Add this parameter
+        kernel_init_code: str = "",
+        user_id: str = "",
     ):
         """
         :param base_url: Enterprise Gateway server URL (e.g., "http://gateway:8888")
@@ -743,6 +356,7 @@ class EnterpriseGatewayCodeExecutor:
         :param chat_id: Chat ID for path replacement and auto-prepare (optional)
         :param data_dir: Base data directory path (default: "data")
         :param kernel_init_code: Kernel initialization code to run after kernel creation (optional)
+        :param user_id: User ID for file registration (optional)
         """
         self.base_url = base_url
         self.original_code = code
@@ -753,6 +367,17 @@ class EnterpriseGatewayCodeExecutor:
         self.username = username
         self.chat_id = chat_id
         self.data_dir = data_dir
+        self.user_id = user_id
+
+        # Initialize file manager for tracking generated files
+        self.file_manager = None
+        if self.chat_id and self.user_id:
+            workspace_path = os.path.join(self.data_dir, "uploads", self.chat_id)
+            self.file_manager = CodeGeneratedFileManager(
+                chat_id=self.chat_id,
+                user_id=self.user_id,
+                workspace_path=workspace_path,
+            )
 
         # Modify code to replace /mnt/data with chat-specific path
         self.code = self._prepare_code_with_path_replacement(code)
@@ -760,19 +385,8 @@ class EnterpriseGatewayCodeExecutor:
         # Auto-prepare files for this chat before code execution
         self.prepare_result = None
         if self.chat_id:
-            logger.info(
-                f"Auto-preparing files for chat {self.chat_id} before code execution"
-            )
-            try:
-                # Note: This is synchronous but auto_prepare_chat_files is async
-                # We'll need to handle this in the run() method instead
-                self._auto_prepare_needed = True
-                logger.debug(f"Marked auto-prepare as needed for chat {self.chat_id}")
-            except Exception as e:
-                logger.error(
-                    f"Failed to mark auto-prepare for chat {self.chat_id}: {str(e)}"
-                )
-                self._auto_prepare_needed = False
+            self._auto_prepare_needed = True
+            logger.debug(f"Marked auto-prepare as needed for chat {self.chat_id}")
         else:
             self._auto_prepare_needed = False
 
@@ -796,206 +410,57 @@ import os
 import sys
 import matplotlib.pyplot as plt
 
+# Set up Chinese font support
 font_names = [
-    'WenQuanYi Micro Hei',  # Likely available after installing fonts-wqy-microhei
-    'Noto Sans CJK SC',     # Available if fonts-noto-cjk is installed
+    'WenQuanYi Micro Hei',
+    'Noto Sans CJK SC',
     'SimHei', 'Microsoft YaHei', 'PingFang SC', 
     'Source Han Sans SC', 'Arial Unicode MS'
 ]
 plt.rcParams['font.sans-serif'] = font_names
 plt.rcParams['axes.unicode_minus'] = False
 
-# Set up environment
 print("Kernel initialized successfully")
 print(f"Python version: {sys.version}")
 print(f"Working directory: {os.getcwd()}")
 """.strip()
 
-    async def _execute_code_via_websocket(
-        self, ws, code: str, is_init: bool = False
-    ) -> Dict[str, Any]:
-        """
-        Shared method to execute code via WebSocket for both initialization and main execution
+    def _prepare_code_with_path_replacement(self, code: str) -> str:
+        """Replace /mnt/data with chat-specific path before execution"""
+        if not self.chat_id:
+            logger.debug("No chat_id provided, using code as-is")
+            return code
 
-        Args:
-            ws: WebSocket connection
-            code: Code to execute
-            is_init: Whether this is initialization code (affects logging and timeout)
+        # Create chat-specific path
+        chat_data_path = f"{self.data_dir}/uploads/{self.chat_id}"
 
-        Returns:
-            Dict with stdout, stderr, results, and execution info
-        """
-        execution_type = "initialization" if is_init else "main"
-        timeout = 15 if is_init else self.timeout
+        # Ensure the directory exists
+        os.makedirs(chat_data_path, exist_ok=True)
+        logger.info(f"Ensured chat data path exists: {chat_data_path}")
 
-        # Send message using Enterprise Gateway format
-        msg_id = str(uuid.uuid4())
-        request = {
-            "header": {
-                "msg_id": msg_id,
-                "msg_type": "execute_request",
-                "username": self.username,
-                "session": str(uuid.uuid4()),
-                "version": "5.4",
-            },
-            "parent_header": {},
-            "metadata": {},
-            "content": {
-                "code": code,
-                "silent": False,
-                "store_history": not is_init,  # Don't store init code in history
-                "user_expressions": {},
-                "allow_stdin": False,
-                "stop_on_error": not is_init,  # Continue on init errors
-            },
-            "buffers": [],
-            "channel": "shell",
-        }
+        # Replace /mnt/data with the chat-specific path
+        modified_code = code.replace("/mnt/data", chat_data_path)
 
-        logger.debug(f"Sending {execution_type} execute request with msg_id {msg_id}")
-        if is_init:
-            logger.debug(f"Init code: {code}")
+        if modified_code != code:
+            logger.debug(f"Replaced '/mnt/data' with '{chat_data_path}' in code")
 
-        await ws.send(json.dumps(request))
+        return modified_code
 
-        # Parse responses
-        stdout_content, stderr_content = "", ""
-        results = []
-        error = None
-        execution_count = 0
+    def _prepare_results_with_path_replacement(self, text: str) -> str:
+        """Replace chat-specific paths back to /mnt/data in output for user display"""
+        if not self.chat_id or not text:
+            return text
 
-        while True:
-            try:
-                message = await asyncio.wait_for(ws.recv(), timeout)
-                response = json.loads(message)
+        # Create chat-specific path
+        chat_data_path = f"{self.data_dir}/uploads/{self.chat_id}"
 
-                # Check if this message is a response to our request
-                if response.get("parent_header", {}).get("msg_id") != msg_id:
-                    continue
+        # Replace the chat-specific path back to /mnt/data for user display
+        modified_text = text.replace(chat_data_path, "/mnt/data")
 
-                msg_type = response.get("msg_type")
+        if modified_text != text:
+            logger.debug(f"Replaced '{chat_data_path}' back to '/mnt/data' in output")
 
-                if not is_init:  # Only log details for main execution
-                    logger.debug(f"Received message of type {msg_type}")
-
-                if msg_type == "stream":
-                    if response["content"]["name"] == "stdout":
-                        stdout_content += response["content"]["text"]
-                        if not is_init:
-                            logger.debug(f"STDOUT: {response['content']['text']}")
-                    elif response["content"]["name"] == "stderr":
-                        stderr_content += response["content"]["text"]
-                        if not is_init:
-                            logger.debug(f"STDERR: {response['content']['text']}")
-
-                elif msg_type == "execute_result":
-                    if not is_init:
-                        logger.debug(f"Execute result: {response['content']}")
-                    if "data" in response["content"]:
-                        if "text/plain" in response["content"]["data"]:
-                            result_text = response["content"]["data"]["text/plain"]
-                            results.append(result_text)
-                        if "image/png" in response["content"]["data"]:
-                            results.append(
-                                f"data:image/png;base64,{response['content']['data']['image/png']}"
-                            )
-
-                elif msg_type == "display_data":
-                    if not is_init:
-                        logger.debug(f"Display data: {response['content']}")
-                    if "data" in response["content"]:
-                        if "text/plain" in response["content"]["data"]:
-                            result_text = response["content"]["data"]["text/plain"]
-                            results.append(result_text)
-                        if "image/png" in response["content"]["data"]:
-                            results.append(
-                                f"data:image/png;base64,{response['content']['data']['image/png']}"
-                            )
-
-                elif msg_type == "error":
-                    error = {
-                        "ename": response["content"]["ename"],
-                        "evalue": response["content"]["evalue"],
-                        "traceback": response["content"]["traceback"],
-                    }
-                    stderr_content += "\n".join(error["traceback"])
-                    if not is_init:
-                        logger.debug(f"Execution error: {error}")
-
-                elif msg_type == "execute_reply":
-                    execution_count = response["content"].get("execution_count", 0)
-                    status = response["content"]["status"]
-
-                    if is_init:
-                        if status == "ok":
-                            logger.info(
-                                f"✓ Kernel initialization completed successfully (execution_count: {execution_count})"
-                            )
-                            if stdout_content.strip():
-                                logger.info(f"Init output: {stdout_content.strip()}")
-                        else:
-                            logger.warning(f"✗ Kernel initialization failed: {status}")
-                            if stderr_content.strip():
-                                logger.warning(f"Init stderr: {stderr_content.strip()}")
-                    else:
-                        logger.debug(f"Execute reply status: {status}")
-                        if status == "ok":
-                            logger.debug("Received execute_reply with status=ok")
-                        elif status == "error":
-                            if (
-                                not error
-                            ):  # Only add if we haven't already processed an error message
-                                error = {
-                                    "ename": response["content"]["ename"],
-                                    "evalue": response["content"]["evalue"],
-                                    "traceback": response["content"]["traceback"],
-                                }
-                                stderr_content += "\n".join(error["traceback"])
-                            logger.debug("Received execute_reply with status=error")
-                    break
-
-                elif msg_type == "status":
-                    if response["content"]["execution_state"] == "idle":
-                        # We still wait for execute_reply before breaking out
-                        if not is_init:
-                            logger.debug("Kernel is idle")
-
-            except asyncio.TimeoutError:
-                timeout_msg = f"\n{execution_type.capitalize()} execution timed out."
-                stderr_content += timeout_msg
-                if is_init:
-                    logger.warning(
-                        f"✗ Kernel initialization timed out after {timeout}s"
-                    )
-                else:
-                    logger.warning(f"Execution timed out after {timeout}s")
-                break
-
-        return {
-            "stdout": stdout_content,
-            "stderr": stderr_content,
-            "results": results,
-            "execution_count": execution_count,
-            "error": error,
-        }
-
-    async def _execute_init_code(self) -> None:
-        """Execute initialization code using shared WebSocket execution method"""
-        logger.info("Executing kernel initialization code")
-
-        try:
-            websocket_url, headers = self.init_ws()
-            async with websockets.connect(
-                websocket_url, additional_headers=headers
-            ) as ws:
-                result = await self._execute_code_via_websocket(
-                    ws, self.kernel_init_code, is_init=True
-                )
-                # Init results are already logged in the shared method, just handle errors
-
-        except Exception as e:
-            logger.warning(f"✗ Kernel initialization error: {str(e)}")
-            # Continue anyway - don't let init failure block main execution
+        return modified_text
 
     async def _auto_prepare_files(self) -> None:
         """Auto-prepare files for this chat if needed"""
@@ -1022,58 +487,12 @@ print(f"Working directory: {os.getcwd()}")
             logger.error(
                 f"Failed to auto-prepare files for chat {self.chat_id}: {str(e)}"
             )
-            # Continue with execution even if file preparation fails
-
-    def _prepare_code_with_path_replacement(self, code: str) -> str:
-        """
-        Replace /mnt/data with chat-specific path before execution
-        Similar to the logic in app.py: modified_code = response.replace(MNT_DATA_DIR, session_dir_path)
-        """
-        if not self.chat_id:
-            logger.debug("No chat_id provided, using code as-is")
-            return code
-
-        # Create chat-specific path
-        chat_data_path = f"{self.data_dir}/uploads/{self.chat_id}"
-
-        # Ensure the directory exists
-        os.makedirs(chat_data_path, exist_ok=True)
-        logger.info(f"Ensured chat data path exists: {chat_data_path}")
-
-        # Replace /mnt/data with the chat-specific path
-        modified_code = code.replace("/mnt/data", chat_data_path)
-
-        if modified_code != code:
-            logger.debug(f"Replaced '/mnt/data' with '{chat_data_path}' in code")
-            logger.debug(f"Original code: {code}")
-            logger.debug(f"Modified code: {modified_code}")
-
-        return modified_code
-
-    def _prepare_results_with_path_replacement(self, text: str) -> str:
-        """
-        Replace chat-specific paths back to /mnt/data in output for user display
-        This ensures users see familiar /mnt/data paths in results and error messages
-        """
-        if not self.chat_id or not text:
-            return text
-
-        # Create chat-specific path
-        chat_data_path = f"{self.data_dir}/uploads/{self.chat_id}"
-
-        # Replace the chat-specific path back to /mnt/data for user display
-        modified_text = text.replace(chat_data_path, "/mnt/data")
-
-        if modified_text != text:
-            logger.debug(f"Replaced '{chat_data_path}' back to '/mnt/data' in output")
-
-        return modified_text
 
     async def __aenter__(self):
         return self
 
     async def __aexit__(self, exc_type, exc_val, exc_tb):
-        if self.kernel_id:
+        if hasattr(self, "kernel_id") and self.kernel_id:
             try:
                 async with self.session.delete(
                     f"api/kernels/{self.kernel_id}", headers=self.headers
@@ -1089,9 +508,67 @@ print(f"Working directory: {os.getcwd()}")
             # Auto-prepare files first if needed
             await self._auto_prepare_files()
 
+            # Capture pre-execution state for file tracking
+            if self.file_manager:
+                logger.info(f"Starting file tracking for chat {self.chat_id}")
+                self.file_manager.capture_pre_execution_state()
+                logger.info(
+                    f"Pre-execution state captured, workspace: {self.file_manager.workspace_path}"
+                )
+
             await self.setup_auth()
             await self.init_kernel()
             await self.execute_code()
+
+            # Capture post-execution state and register generated files
+            if self.file_manager:
+                logger.info("Capturing post-execution state for file tracking")
+                self.file_manager.capture_post_execution_state()
+                generated_files = self.file_manager.get_newly_generated_files()
+
+                if generated_files:
+                    logger.info(f"Found {len(generated_files)} newly generated files:")
+                    for i, file_info in enumerate(generated_files):
+                        logger.info(
+                            f"  {i+1}. {file_info['name']} ({file_info['size']} bytes, {file_info['format']})"
+                        )
+
+                    # Register files to storage
+                    registered_file_ids = self.file_manager.register_files_to_storage(
+                        generated_files
+                    )
+                    logger.info(
+                        f"Attempted to register {len(registered_file_ids)} files"
+                    )
+
+                    # Add file information to the result
+                    if not hasattr(self.result, "files"):
+                        self.result.files = []
+
+                    for file_info, file_id in zip(generated_files, registered_file_ids):
+                        if file_id:
+                            file_data = {
+                                "id": file_id,
+                                "name": file_info["name"],
+                                "url": f"/api/v1/files/{file_id}/content",  # Fixed: changed from /download to /content
+                                "size": file_info["size"],
+                                "format": file_info["format"],
+                            }
+                            self.result.files.append(file_data)
+                            logger.info(f"Added file to result: {file_data}")
+                        else:
+                            logger.warning(
+                                f"Failed to register file: {file_info['name']}"
+                            )
+
+                    logger.info(
+                        f"Successfully registered {len([fid for fid in registered_file_ids if fid])} files to storage"
+                    )
+                else:
+                    logger.info("No new files generated during execution")
+            else:
+                logger.warning("File manager not initialized - file tracking disabled")
+
         except Exception as err:
             logger.exception("execute code failed, %s", err)
             self.result.stderr = f"Error: {err}"
@@ -1123,10 +600,6 @@ print(f"Working directory: {os.getcwd()}")
                 self.kernel_id = kernel_data["id"]
                 logger.info(f"Created kernel {self.kernel_id} for user {self.username}")
 
-                # Execute kernel initialization code if provided
-                if self.kernel_init_code:
-                    await self._execute_init_code()
-
         except Exception as e:
             logger.error(f"Failed to create kernel: {str(e)}")
             raise
@@ -1152,39 +625,107 @@ print(f"Working directory: {os.getcwd()}")
         # Log the code that will be executed
         logger.debug(f"Original code: {self.original_code}")
         logger.debug(f"Modified code (after path replacement): {self.code}")
-        if self.chat_id:
-            logger.debug(f"Chat ID: {self.chat_id}, Data dir: {self.data_dir}")
-            chat_data_path = f"{self.data_dir}/uploads/{self.chat_id}"
-            logger.debug(f"Replacing '/mnt/data' with '{chat_data_path}'")
 
-        # Use shared execution method
-        result = await self._execute_code_via_websocket(ws, self.code, is_init=False)
+        # Send message using Enterprise Gateway format
+        msg_id = str(uuid.uuid4())
+        request = {
+            "header": {
+                "msg_id": msg_id,
+                "msg_type": "execute_request",
+                "username": self.username,
+                "session": str(uuid.uuid4()),
+                "version": "5.4",
+            },
+            "parent_header": {},
+            "metadata": {},
+            "content": {
+                "code": self.code,
+                "silent": False,
+                "store_history": True,
+                "user_expressions": {},
+                "allow_stdin": False,
+                "stop_on_error": True,
+            },
+            "buffers": [],
+            "channel": "shell",
+        }
+
+        await ws.send(json.dumps(request))
+
+        # Parse responses
+        stdout_content, stderr_content = "", ""
+        results = []
+
+        while True:
+            try:
+                message = await asyncio.wait_for(ws.recv(), self.timeout)
+                response = json.loads(message)
+
+                # Check if this message is a response to our request
+                if response.get("parent_header", {}).get("msg_id") != msg_id:
+                    continue
+
+                msg_type = response.get("msg_type")
+
+                if msg_type == "stream":
+                    if response["content"]["name"] == "stdout":
+                        stdout_content += response["content"]["text"]
+                    elif response["content"]["name"] == "stderr":
+                        stderr_content += response["content"]["text"]
+
+                elif msg_type == "execute_result":
+                    if "data" in response["content"]:
+                        if "text/plain" in response["content"]["data"]:
+                            result_text = response["content"]["data"]["text/plain"]
+                            results.append(result_text)
+                        if "image/png" in response["content"]["data"]:
+                            results.append(
+                                f"data:image/png;base64,{response['content']['data']['image/png']}"
+                            )
+
+                elif msg_type == "display_data":
+                    if "data" in response["content"]:
+                        if "text/plain" in response["content"]["data"]:
+                            result_text = response["content"]["data"]["text/plain"]
+                            results.append(result_text)
+                        if "image/png" in response["content"]["data"]:
+                            results.append(
+                                f"data:image/png;base64,{response['content']['data']['image/png']}"
+                            )
+
+                elif msg_type == "error":
+                    error = {
+                        "ename": response["content"]["ename"],
+                        "evalue": response["content"]["evalue"],
+                        "traceback": response["content"]["traceback"],
+                    }
+                    stderr_content += "\n".join(error["traceback"])
+
+                elif msg_type == "execute_reply":
+                    status = response["content"]["status"]
+                    if status == "ok":
+                        logger.debug("Code execution completed successfully")
+                    elif status == "error":
+                        logger.debug("Code execution completed with errors")
+                    break
+
+            except asyncio.TimeoutError:
+                stderr_content += "\nExecution timed out."
+                logger.warning(f"Execution timed out after {self.timeout}s")
+                break
 
         # Apply path replacement to results
         self.result.stdout = self._prepare_results_with_path_replacement(
-            result["stdout"].strip()
+            stdout_content.strip()
         )
         self.result.stderr = self._prepare_results_with_path_replacement(
-            result["stderr"].strip()
+            stderr_content.strip()
         )
         self.result.result = self._prepare_results_with_path_replacement(
-            "\n".join(result["results"]).strip() if result["results"] else ""
+            "\n".join(results).strip() if results else ""
         )
 
-        logger.debug(f"Final result - stdout: {self.result.stdout}")
-        logger.debug(f"Final result - stderr: {self.result.stderr}")
-        logger.debug(f"Final result - result: {self.result.result}")
         logger.info("Code execution completed")
-
-
-async def deprecated_execute_code_jupyter(
-    base_url: str, code: str, token: str = "", password: str = "", timeout: int = 60
-) -> dict:
-    async with JupyterCodeExecuter(
-        base_url, code, token, password, timeout
-    ) as executor:
-        result = await executor.run()
-        return result.model_dump()
 
 
 async def execute_code_jupyter(
@@ -1195,7 +736,8 @@ async def execute_code_jupyter(
     timeout: int = 60,
     chat_id: str = "",
     data_dir: str = "data",
-    kernel_init_code: str = "",  # Add this parameter
+    kernel_init_code: str = "",
+    user_id: str = "",
 ) -> dict:
     async with EnterpriseGatewayCodeExecutor(
         base_url,
@@ -1206,117 +748,7 @@ async def execute_code_jupyter(
         chat_id=chat_id,
         data_dir=data_dir,
         kernel_init_code=kernel_init_code,
+        user_id=user_id,
     ) as executor:
         result = await executor.run()
         return result.model_dump()
-
-
-def generate_dynamic_code_interpreter_prompt(
-    base_prompt: str,
-    chat_id: str = "",
-    attached_files: Optional[List[Dict[str, Any]]] = None,
-) -> str:
-    """
-    Generate a dynamic code interpreter prompt that includes information about attached files.
-
-    Args:
-        base_prompt: The base code interpreter prompt template
-        chat_id: Chat ID for context
-        attached_files: List of attached file information
-
-    Returns:
-        Enhanced prompt with file information
-    """
-    if not attached_files:
-        if chat_id:
-            # Try to get attached files from chat
-            attached_files = get_attached_files_from_chat(chat_id)
-
-    if not attached_files:
-        # No files attached, return base prompt
-        return base_prompt
-
-    # Create file information section
-    file_info_lines = []
-    file_info_lines.append("\n#### Available Files")
-    file_info_lines.append(
-        "The following files have been attached to this conversation and are available in `/mnt/data/`:"
-    )
-    file_info_lines.append("")
-
-    for file_info in attached_files:
-        file_name = file_info.get("name", "unknown_file")
-        file_type = file_info.get("type", "file")
-        file_size = file_info.get("size")
-
-        # Format file size if available
-        size_str = ""
-        if file_size:
-            if file_size < 1024:
-                size_str = f" ({file_size} bytes)"
-            elif file_size < 1024 * 1024:
-                size_str = f" ({file_size / 1024:.1f} KB)"
-            else:
-                size_str = f" ({file_size / (1024 * 1024):.1f} MB)"
-
-        file_info_lines.append(
-            f"- **{file_name}**{size_str} - Available at `/mnt/data/{file_name}`"
-        )
-
-        # Add file type specific suggestions
-        if file_name.lower().endswith((".csv", ".tsv")):
-            file_info_lines.append(
-                f"  - Data file - Use `pd.read_csv('/mnt/data/{file_name}')` to load"
-            )
-        elif file_name.lower().endswith((".xlsx", ".xls")):
-            file_info_lines.append(
-                f"  - Excel file - Use `pd.read_excel('/mnt/data/{file_name}')` to load"
-            )
-        elif file_name.lower().endswith((".json", ".jsonl")):
-            file_info_lines.append(
-                f"  - JSON file - Use `pd.read_json('/mnt/data/{file_name}')` or `json.load()` to load"
-            )
-        elif file_name.lower().endswith((".txt", ".md", ".py", ".js", ".html", ".css")):
-            file_info_lines.append(
-                f"  - Text file - Use `open('/mnt/data/{file_name}', 'r').read()` to load"
-            )
-        elif file_name.lower().endswith(
-            (".png", ".jpg", ".jpeg", ".gif", ".bmp", ".tiff")
-        ):
-            file_info_lines.append(
-                f"  - Image file - Use `PIL.Image.open('/mnt/data/{file_name}')` or `cv2.imread()` to load"
-            )
-        elif file_name.lower().endswith((".pdf")):
-            file_info_lines.append(
-                f"  - PDF file - Use `PyPDF2` or `pdfplumber` to extract text/data"
-            )
-
-    file_info_lines.append("")
-    file_info_lines.append(
-        "**Important**: These files are immediately ready to use - no upload needed. Reference them directly by their paths above."
-    )
-
-    # Insert file information after the main code interpreter description but before the final note
-    file_info_section = "\n".join(file_info_lines)
-
-    # Find a good insertion point in the base prompt
-    prompt_lines = base_prompt.split("\n")
-
-    # Look for the line about /mnt/data and insert file info after it
-    insertion_point = -1
-    for i, line in enumerate(prompt_lines):
-        if "drive at '/mnt/data'" in line.lower():
-            insertion_point = i + 1
-            break
-
-    if insertion_point > 0:
-        # Insert file information after the /mnt/data line
-        enhanced_lines = (
-            prompt_lines[:insertion_point]
-            + file_info_section.split("\n")
-            + prompt_lines[insertion_point:]
-        )
-        return "\n".join(enhanced_lines)
-    else:
-        # Fallback: append file information at the end
-        return base_prompt + "\n" + file_info_section

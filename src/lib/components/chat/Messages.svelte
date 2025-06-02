@@ -19,6 +19,7 @@
 	import Message from './Messages/Message.svelte';
 	import Loader from '../common/Loader.svelte';
 	import Spinner from '../common/Spinner.svelte';
+	import FileDownloadPanel from '../common/FileDownloadPanel.svelte';
 
 	import ChatPlaceholder from './ChatPlaceholder.svelte';
 
@@ -35,6 +36,55 @@
 	export let atSelectedModel;
 
 	let messages = [];
+	let downloadableFiles = [];
+
+	// Extract downloadable files from all messages
+	$: downloadableFiles = messages
+		.flatMap((message) => {
+			// Look for files in message metadata or content
+			const messageFiles = [];
+
+			// Check if message has files attached
+			if (message.files && Array.isArray(message.files)) {
+				messageFiles.push(...message.files);
+			}
+
+			// Check message content for code execution results with files
+			if (message.content && typeof message.content === 'string') {
+				try {
+					// Look for details elements with code interpreter output
+					const detailsRegex = /<details[^>]*output="([^"]*)"[^>]*>/g;
+					let match;
+					while ((match = detailsRegex.exec(message.content)) !== null) {
+						try {
+							const outputData = JSON.parse(
+								match[1].replace(/&quot;/g, '"').replace(/&#x27;/g, "'")
+							);
+							if (outputData.files && Array.isArray(outputData.files)) {
+								messageFiles.push(
+									...outputData.files.map((file) => ({
+										...file,
+										messageId: message.id
+									}))
+								);
+							}
+						} catch (e) {
+							// Silent fail for parsing errors
+						}
+					}
+				} catch (e) {
+					// Silent fail for content parsing errors
+				}
+			}
+
+			return messageFiles;
+		})
+		.filter((file) => file && file.id && file.name) // Only include valid files
+		.filter(
+			(file, index, array) =>
+				// Remove duplicates based on file ID
+				array.findIndex((f) => f.id === file.id) === index
+		);
 
 	export let sendPrompt: Function;
 	export let continueResponse: Function;
@@ -459,6 +509,14 @@
 				<div class="pb-12" />
 				{#if bottomPadding}
 					<div class="  pb-6" />
+				{/if}
+				{#if downloadableFiles.length > 0}
+					<FileDownloadPanel
+						files={downloadableFiles}
+						title={$i18n.t('Generated Files')}
+						subtitle={$i18n.t('Files created during this conversation')}
+						showRefreshButton={false}
+					/>
 				{/if}
 			{/key}
 		</div>

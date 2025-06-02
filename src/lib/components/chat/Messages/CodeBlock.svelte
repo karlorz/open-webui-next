@@ -19,6 +19,8 @@
 	import ChevronUpDown from '$lib/components/icons/ChevronUpDown.svelte';
 	import CommandLine from '$lib/components/icons/CommandLine.svelte';
 	import Cube from '$lib/components/icons/Cube.svelte';
+	import { downloadCodeGeneratedFile } from '$lib/apis/files';
+	import FileDownloadPanel from '$lib/components/common/FileDownloadPanel.svelte';
 
 	const i18n = getContext('i18n');
 
@@ -135,6 +137,7 @@
 		result = null;
 		stdout = null;
 		stderr = null;
+		files = null; // Reset files
 
 		executing = true;
 
@@ -148,6 +151,7 @@
 			});
 
 			if (output) {
+				// Handle stdout and extract images
 				if (output['stdout']) {
 					stdout = output['stdout'];
 					const stdoutLines = stdout.split('\n');
@@ -177,6 +181,7 @@
 					}
 				}
 
+				// Handle result and extract images
 				if (output['result']) {
 					result = output['result'];
 					const resultLines = result.split('\n');
@@ -203,6 +208,27 @@
 								result = result.replace(`${line}`, ``);
 							}
 						}
+					}
+				}
+
+				// Handle downloadable files from API response
+				if (output['files'] && Array.isArray(output['files'])) {
+					console.log('Code execution generated files:', output['files']);
+
+					if (!files) {
+						files = [];
+					}
+
+					// Add downloadable files to the files array
+					for (const file of output['files']) {
+						files.push({
+							type: 'downloadable',
+							id: file.id,
+							name: file.name,
+							url: file.url,
+							size: file.size,
+							format: file.format || 'Unknown'
+						});
 					}
 				}
 
@@ -325,6 +351,17 @@
 		};
 	};
 
+	// Add function to handle file download
+	const downloadFile = async (fileId, fileName) => {
+		try {
+			await downloadCodeGeneratedFile(localStorage.token, fileId);
+			toast.success(`Downloaded ${fileName}`);
+		} catch (error) {
+			console.error('Download error:', error);
+			toast.error(`Failed to download ${fileName}: ${error.message || 'Unknown error'}`);
+		}
+	};
+
 	let debounceTimeout;
 
 	const drawMermaidDiagram = async () => {
@@ -414,6 +451,28 @@
 			pyodideWorker.terminate();
 		}
 	});
+
+	// Separate downloadable files from other file types for better UI organization
+	$: downloadableFiles = files ? files.filter((file) => file.type === 'downloadable') : [];
+	$: imageFiles = files ? files.filter((file) => file.type.startsWith('image')) : [];
+
+	// Handle file panel events
+	const handleFileDownloaded = (event) => {
+		const file = event.detail;
+		console.log('File downloaded:', file.name);
+		// Could add analytics or other post-download actions here
+	};
+
+	const handleFileRefresh = () => {
+		// Could implement file refresh functionality here
+		console.log('Refreshing files...');
+	};
+
+	const handleFileClick = (event) => {
+		const file = event.detail;
+		console.log('File clicked:', file.name);
+		// Could implement file preview or other actions here
+	};
 </script>
 
 <div>
@@ -568,18 +627,16 @@
 									</div>
 								</div>
 							{/if}
-							{#if result || files}
+							{#if result || imageFiles.length > 0}
 								<div class=" ">
 									<div class=" text-gray-500 text-xs mb-1">RESULT</div>
 									{#if result}
 										<div class="text-sm">{`${JSON.stringify(result)}`}</div>
 									{/if}
-									{#if files}
+									{#if imageFiles.length > 0}
 										<div class="flex flex-col gap-2">
-											{#each files as file}
-												{#if file.type.startsWith('image')}
-													<img src={file.data} alt="Output" class=" w-full max-w-[36rem]" />
-												{/if}
+											{#each imageFiles as file}
+												<img src={file.data} alt="Output" class=" w-full max-w-[36rem]" />
 											{/each}
 										</div>
 									{/if}
@@ -587,6 +644,20 @@
 							{/if}
 						{/if}
 					</div>
+				{/if}
+
+				<!-- Enhanced File Download Panel for downloadable files -->
+				{#if downloadableFiles.length > 0}
+					<FileDownloadPanel
+						files={downloadableFiles}
+						title={$i18n.t('Generated Files')}
+						subtitle={$i18n.t('Files created during code execution')}
+						loading={executing}
+						showRefreshButton={false}
+						on:downloaded={handleFileDownloaded}
+						on:refresh={handleFileRefresh}
+						on:fileClick={handleFileClick}
+					/>
 				{/if}
 			{/if}
 		{/if}

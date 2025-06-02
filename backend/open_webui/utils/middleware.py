@@ -1384,7 +1384,7 @@ async def process_chat_response(
                                     "name", ""
                                 )
                                 tool_arguments = tool_call.get("function", {}).get(
-                                    "arguments", ""
+                                    "arguments"
                                 )
 
                                 tool_calls_display_content = f'{tool_calls_display_content}\n<details type="tool_calls" done="false" id="{tool_call_id}" name="{tool_name}" arguments="{html.escape(json.dumps(tool_arguments))}">\n<summary>Executing...</summary>\n</details>'
@@ -2218,6 +2218,7 @@ async def process_chat_response(
                                         request.app.state.config.CODE_INTERPRETER_JUPYTER_TIMEOUT,
                                         chat_id=metadata.get("chat_id", ""),
                                         data_dir="data",
+                                        user_id=user.id,  # Add the missing user_id parameter
                                     )
                                 else:
                                     output = {
