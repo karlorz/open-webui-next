@@ -30,7 +30,8 @@ async def get_gravatar(email: str, user=Depends(get_verified_user)):
 
 class CodeForm(BaseModel):
     code: str
-    chat_id: str = ""  # Add chat_id parameter with default empty string
+    message_id: str = ""  # Add message_id parameter with default empty string
+    chat_id: str = ""  # Keep chat_id for compatibility but make it optional
 
 
 @router.post("/code/format")
@@ -63,7 +64,8 @@ async def execute_code(
                 else None
             ),
             request.app.state.config.CODE_EXECUTION_JUPYTER_TIMEOUT,
-            form_data.chat_id,  # Pass chat_id to the enhanced function
+            message_id=form_data.message_id,  # Pass message_id for file scanning
+            chat_id=form_data.chat_id,  # Pass chat_id for context
             user_id=user.id,  # Pass user_id for file tracking
         )
 

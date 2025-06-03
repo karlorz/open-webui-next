@@ -26,7 +26,7 @@ logger.setLevel(SRC_LOG_LEVELS["MAIN"])
 def generate_dynamic_code_interpreter_prompt(
     base_prompt: str,
     attached_files: List[Dict[str, Any]] = None,
-    chat_id: str = "",
+    message_id: str = "",
 ) -> str:
     """
     Generate a dynamic code interpreter prompt that includes information about attached files.
@@ -34,7 +34,7 @@ def generate_dynamic_code_interpreter_prompt(
     Args:
         base_prompt: The base code interpreter prompt template
         attached_files: List of file metadata dictionaries
-        chat_id: Chat ID for context
+        message_id: Message ID for context
 
     Returns:
         Enhanced prompt string with file information
@@ -107,18 +107,21 @@ def generate_dynamic_code_interpreter_prompt(
     enhanced_prompt = base_prompt + file_info_section
 
     logger.debug(
-        f"Generated dynamic code interpreter prompt for chat {chat_id} with {len(attached_files)} files"
+        f"Generated dynamic code interpreter prompt for message {message_id} with {len(attached_files)} files"
     )
 
     return enhanced_prompt
 
 
-def get_attached_files_from_chat(chat_id: str) -> List[Dict[str, Any]]:
+def get_attached_files_from_message(
+    message_id: str, chat_id: str
+) -> List[Dict[str, Any]]:
     """
-    Scan through all messages in a chat to find attached files.
-    Returns a list of file metadata dictionaries.
+    Get attached files from a specific message ID or its preceding user message.
+    For assistant messages, looks in the previous user message for attached files.
+    When message_id is empty (new chat), searches for recent user messages with files in the chat.
     """
-    logger.info(f"Scanning chat {chat_id} for attached files")
+    logger.info(f"Getting attached files from message {message_id} in chat {chat_id}")
 
     try:
         # Get the chat data
@@ -127,83 +130,158 @@ def get_attached_files_from_chat(chat_id: str) -> List[Dict[str, Any]]:
             logger.warning(f"Chat {chat_id} not found")
             return []
 
-        attached_files = []
         chat_data = chat.chat
-
-        # Extract messages from chat history
         messages = chat_data.get("history", {}).get("messages", {})
 
-        for message_id, message in messages.items():
-            # Check if message has files attached
-            files = message.get("files", [])
+        attached_files = []
 
-            for file_info in files:
-                # Extract file metadata
-                file_data = {
-                    "id": file_info.get("id"),
-                    "name": file_info.get("name", "unknown_file"),
-                    "type": file_info.get("type", "file"),
-                    "size": file_info.get("size"),
-                    "url": file_info.get("url"),
-                    "message_id": message_id,
-                }
+        # Handle case when message_id is empty (new chat scenario)
+        if not message_id:
+            logger.info(
+                f"No message_id provided, searching for recent user messages with files in chat {chat_id}"
+            )
 
-                # Only include files with valid IDs
-                if file_data["id"]:
-                    attached_files.append(file_data)
-                    logger.debug(
-                        f"Found attached file: {file_data['name']} (ID: {file_data['id']})"
+            # Find the most recent user message with files
+            user_messages_with_files = []
+            for msg_id, msg in messages.items():
+                if (
+                    msg.get("role") == "user"
+                    and msg.get("files")
+                    and len(msg.get("files", [])) > 0
+                ):
+                    user_messages_with_files.append(
+                        (msg.get("timestamp", 0), msg_id, msg)
                     )
 
-        logger.info(f"Found {len(attached_files)} attached files in chat {chat_id}")
+            if user_messages_with_files:
+                # Sort by timestamp and get the most recent one
+                user_messages_with_files.sort(key=lambda x: x[0], reverse=True)
+                most_recent_timestamp, most_recent_msg_id, most_recent_msg = (
+                    user_messages_with_files[0]
+                )
+
+                files = most_recent_msg.get("files", [])
+                logger.info(
+                    f"Found {len(files)} files in most recent user message {most_recent_msg_id}"
+                )
+            else:
+                logger.info(f"No user messages with files found in chat {chat_id}")
+                files = []
+        else:
+            # Get the specific message
+            message = messages.get(message_id)
+            if not message:
+                logger.warning(f"Message {message_id} not found in chat {chat_id}")
+                return []
+
+            # Check current message first
+            files = message.get("files", [])
+            if files:
+                logger.info(f"Found {len(files)} files in current message {message_id}")
+            else:
+                # If current message has no files and it's an assistant message,
+                # look in the previous user message
+                if message.get("role") == "assistant":
+                    logger.info(
+                        f"Assistant message {message_id} has no files, checking previous user message"
+                    )
+
+                    # Get parent_id to find the user message that triggered this response
+                    parent_id = message.get("parentId") or message.get("parent_id")
+                    if parent_id and parent_id in messages:
+                        parent_message = messages[parent_id]
+                        if parent_message.get("role") == "user":
+                            files = parent_message.get("files", [])
+                            if files:
+                                logger.info(
+                                    f"Found {len(files)} files in parent user message {parent_id}"
+                                )
+                            else:
+                                logger.info(
+                                    f"No files found in parent user message {parent_id}"
+                                )
+                        else:
+                            logger.debug(
+                                f"Parent message {parent_id} is not a user message (role: {parent_message.get('role')})"
+                            )
+                    else:
+                        logger.debug(
+                            f"No valid parent_id found for assistant message {message_id}"
+                        )
+                else:
+                    logger.info(
+                        f"Message {message_id} is a {message.get('role', 'unknown')} message with no files"
+                    )
+
+        # Process the files
+        for file_info in files:
+            # Extract file metadata
+            file_data = {
+                "id": file_info.get("id"),
+                "name": file_info.get("name", "unknown_file"),
+                "type": file_info.get("type", "file"),
+                "size": file_info.get("size"),
+                "url": file_info.get("url"),
+                "message_id": message_id,
+            }
+
+            # Only include files with valid IDs
+            if file_data["id"]:
+                attached_files.append(file_data)
+                logger.debug(
+                    f"Found attached file: {file_data['name']} (ID: {file_data['id']})"
+                )
+
+        logger.info(
+            f"Found {len(attached_files)} attached files for message {message_id} in chat {chat_id}"
+        )
         return attached_files
 
     except Exception as e:
-        logger.error(f"Error scanning chat {chat_id} for files: {str(e)}")
+        logger.error(f"Error getting files from message {message_id}: {str(e)}")
         return []
 
 
-async def auto_prepare_chat_files(
-    chat_id: str, data_dir: str = "data"
+async def auto_prepare_message_files(
+    attached_files: List[Dict[str, Any]], workspace_id: str, data_dir: str = "data"
 ) -> Dict[str, Any]:
     """
-    Automatically prepare files attached to chat messages for use in the Jupyter environment.
+    Automatically prepare files attached to a message for use in the Jupyter environment.
     Creates symbolic links in the Jupyter data directory pointing to the uploaded files.
     Falls back to copying files if symlinks don't work (e.g., Docker environments).
 
     Args:
-        chat_id: The chat ID to prepare files for
+        attached_files: List of file metadata dictionaries
+        workspace_id: Unique workspace identifier (could be message_id or session_id)
         data_dir: Base data directory (default: "data")
 
     Returns:
         Dictionary with preparation results including success status, prepared files count, and any errors
     """
-    logger.info(f"Auto-preparing files for chat {chat_id}")
+    logger.info(
+        f"Auto-preparing {len(attached_files)} files for workspace {workspace_id}"
+    )
 
     result = {
         "success": False,
-        "chat_id": chat_id,
+        "workspace_id": workspace_id,
         "prepared_files": [],
         "skipped_files": [],
         "errors": [],
-        "total_files": 0,
+        "total_files": len(attached_files),
         "method": None,  # Will be "symlink" or "copy"
     }
 
+    if not attached_files:
+        logger.info(f"No files to prepare for workspace {workspace_id}")
+        result["success"] = True
+        return result
+
     try:
-        # Get attached files from chat
-        attached_files = get_attached_files_from_chat(chat_id)
-        result["total_files"] = len(attached_files)
-
-        if not attached_files:
-            logger.info(f"No files found in chat {chat_id}")
-            result["success"] = True
-            return result
-
-        # Create chat-specific data directory
-        chat_data_dir = os.path.join(data_dir, "uploads", chat_id)
-        os.makedirs(chat_data_dir, exist_ok=True)
-        logger.info(f"Created/verified chat data directory: {chat_data_dir}")
+        # Create workspace-specific data directory
+        workspace_data_dir = os.path.join(data_dir, "uploads", workspace_id)
+        os.makedirs(workspace_data_dir, exist_ok=True)
+        logger.info(f"Created/verified workspace data directory: {workspace_data_dir}")
 
         # Force copy method for Docker compatibility - symlinks often fail in bind volumes
         use_symlinks = False
@@ -257,8 +335,8 @@ async def auto_prepare_chat_files(
                     result["errors"].append(f"Source file not found: {file_name}")
                     continue
 
-                # Create target path in chat data directory
-                target_path = os.path.join(chat_data_dir, file_name)
+                # Create target path in workspace data directory
+                target_path = os.path.join(workspace_data_dir, file_name)
 
                 # Remove existing file/symlink if it exists
                 if os.path.exists(target_path) or os.path.islink(target_path):
@@ -299,7 +377,7 @@ async def auto_prepare_chat_files(
         )
 
         logger.info(
-            f"Auto-prepare completed for chat {chat_id}: "
+            f"Auto-prepare completed for workspace {workspace_id}: "
             f"{len(result['prepared_files'])} prepared using {method}, "
             f"{len(result['skipped_files'])} skipped, "
             f"{len(result['errors'])} errors"
@@ -308,7 +386,9 @@ async def auto_prepare_chat_files(
         return result
 
     except Exception as e:
-        error_msg = f"Failed to auto-prepare files for chat {chat_id}: {str(e)}"
+        error_msg = (
+            f"Failed to auto-prepare files for workspace {workspace_id}: {str(e)}"
+        )
         logger.error(error_msg)
         result["errors"].append(error_msg)
         result["success"] = False
@@ -340,10 +420,11 @@ class EnterpriseGatewayCodeExecutor:
         timeout: int = 60,
         kernel_name: str = "python",
         username: str = "code-interpreter",
-        chat_id: str = "",
+        workspace_id: str = "",
         data_dir: str = "data",
         kernel_init_code: str = "",
         user_id: str = "",
+        attached_files: List[Dict[str, Any]] = None,
     ):
         """
         :param base_url: Enterprise Gateway server URL (e.g., "http://gateway:8888")
@@ -353,10 +434,11 @@ class EnterpriseGatewayCodeExecutor:
         :param timeout: WebSocket timeout in seconds (default: 60s)
         :param kernel_name: Kernel name to use (default: from configuration)
         :param username: Username for the kernel (default: from configuration)
-        :param chat_id: Chat ID for path replacement and auto-prepare (optional)
+        :param workspace_id: Workspace ID for path replacement and auto-prepare (optional)
         :param data_dir: Base data directory path (default: "data")
         :param kernel_init_code: Kernel initialization code to run after kernel creation (optional)
         :param user_id: User ID for file registration (optional)
+        :param attached_files: List of attached file metadata (optional)
         """
         self.base_url = base_url
         self.original_code = code
@@ -365,28 +447,31 @@ class EnterpriseGatewayCodeExecutor:
         self.timeout = timeout
         self.kernel_name = kernel_name
         self.username = username
-        self.chat_id = chat_id
+        self.workspace_id = workspace_id
         self.data_dir = data_dir
         self.user_id = user_id
+        self.attached_files = attached_files or []
 
         # Initialize file manager for tracking generated files
         self.file_manager = None
-        if self.chat_id and self.user_id:
-            workspace_path = os.path.join(self.data_dir, "uploads", self.chat_id)
+        if self.workspace_id and self.user_id:
+            workspace_path = os.path.join(self.data_dir, "uploads", self.workspace_id)
             self.file_manager = CodeGeneratedFileManager(
-                chat_id=self.chat_id,
+                chat_id=self.workspace_id,  # Use workspace_id as chat_id for compatibility
                 user_id=self.user_id,
                 workspace_path=workspace_path,
             )
 
-        # Modify code to replace /mnt/data with chat-specific path
+        # Modify code to replace /mnt/data with workspace-specific path
         self.code = self._prepare_code_with_path_replacement(code)
 
-        # Auto-prepare files for this chat before code execution
+        # Auto-prepare files for this workspace before code execution
         self.prepare_result = None
-        if self.chat_id:
+        if self.workspace_id and self.attached_files:
             self._auto_prepare_needed = True
-            logger.debug(f"Marked auto-prepare as needed for chat {self.chat_id}")
+            logger.debug(
+                f"Marked auto-prepare as needed for workspace {self.workspace_id}"
+            )
         else:
             self._auto_prepare_needed = False
 
@@ -396,8 +481,8 @@ class EnterpriseGatewayCodeExecutor:
         logger.info(
             f"Initializing Enterprise Gateway connection to {self.base_url} with kernel {self.kernel_name}"
         )
-        if self.chat_id:
-            logger.info(f"Using chat ID {self.chat_id} for path replacement")
+        if self.workspace_id:
+            logger.info(f"Using workspace ID {self.workspace_id} for path replacement")
         self.session = aiohttp.ClientSession(trust_env=True, base_url=self.base_url)
         self.headers = {}
         self.result = ResultModel()
@@ -426,66 +511,70 @@ print(f"Working directory: {os.getcwd()}")
 """.strip()
 
     def _prepare_code_with_path_replacement(self, code: str) -> str:
-        """Replace /mnt/data with chat-specific path before execution"""
-        if not self.chat_id:
-            logger.debug("No chat_id provided, using code as-is")
+        """Replace /mnt/data with workspace-specific path before execution"""
+        if not self.workspace_id:
+            logger.debug("No workspace_id provided, using code as-is")
             return code
 
-        # Create chat-specific path
-        chat_data_path = f"{self.data_dir}/uploads/{self.chat_id}"
+        # Create workspace-specific path
+        workspace_data_path = f"{self.data_dir}/uploads/{self.workspace_id}"
 
         # Ensure the directory exists
-        os.makedirs(chat_data_path, exist_ok=True)
-        logger.info(f"Ensured chat data path exists: {chat_data_path}")
+        os.makedirs(workspace_data_path, exist_ok=True)
+        logger.info(f"Ensured workspace data path exists: {workspace_data_path}")
 
-        # Replace /mnt/data with the chat-specific path
-        modified_code = code.replace("/mnt/data", chat_data_path)
+        # Replace /mnt/data with the workspace-specific path
+        modified_code = code.replace("/mnt/data", workspace_data_path)
 
         if modified_code != code:
-            logger.debug(f"Replaced '/mnt/data' with '{chat_data_path}' in code")
+            logger.debug(f"Replaced '/mnt/data' with '{workspace_data_path}' in code")
 
         return modified_code
 
     def _prepare_results_with_path_replacement(self, text: str) -> str:
-        """Replace chat-specific paths back to /mnt/data in output for user display"""
-        if not self.chat_id or not text:
+        """Replace workspace-specific paths back to /mnt/data in output for user display"""
+        if not self.workspace_id or not text:
             return text
 
-        # Create chat-specific path
-        chat_data_path = f"{self.data_dir}/uploads/{self.chat_id}"
+        # Create workspace-specific path
+        workspace_data_path = f"{self.data_dir}/uploads/{self.workspace_id}"
 
-        # Replace the chat-specific path back to /mnt/data for user display
-        modified_text = text.replace(chat_data_path, "/mnt/data")
+        # Replace the workspace-specific path back to /mnt/data for user display
+        modified_text = text.replace(workspace_data_path, "/mnt/data")
 
         if modified_text != text:
-            logger.debug(f"Replaced '{chat_data_path}' back to '/mnt/data' in output")
+            logger.debug(
+                f"Replaced '{workspace_data_path}' back to '/mnt/data' in output"
+            )
 
         return modified_text
 
     async def _auto_prepare_files(self) -> None:
-        """Auto-prepare files for this chat if needed"""
-        if not self._auto_prepare_needed or not self.chat_id:
+        """Auto-prepare files for this workspace if needed"""
+        if not self._auto_prepare_needed or not self.workspace_id:
             return
 
         try:
-            self.prepare_result = await auto_prepare_chat_files(
-                self.chat_id, self.data_dir
+            self.prepare_result = await auto_prepare_message_files(
+                self.attached_files, self.workspace_id, self.data_dir
             )
             if self.prepare_result["success"]:
                 prepared_count = len(self.prepare_result["prepared_files"])
                 if prepared_count > 0:
                     logger.info(
-                        f"Successfully prepared {prepared_count} files for chat {self.chat_id}"
+                        f"Successfully prepared {prepared_count} files for workspace {self.workspace_id}"
                     )
                 else:
-                    logger.debug(f"No files to prepare for chat {self.chat_id}")
+                    logger.debug(
+                        f"No files to prepare for workspace {self.workspace_id}"
+                    )
             else:
                 logger.warning(
-                    f"File preparation had issues for chat {self.chat_id}: {self.prepare_result['errors']}"
+                    f"File preparation had issues for workspace {self.workspace_id}: {self.prepare_result['errors']}"
                 )
         except Exception as e:
             logger.error(
-                f"Failed to auto-prepare files for chat {self.chat_id}: {str(e)}"
+                f"Failed to auto-prepare files for workspace {self.workspace_id}: {str(e)}"
             )
 
     async def __aenter__(self):
@@ -510,7 +599,7 @@ print(f"Working directory: {os.getcwd()}")
 
             # Capture pre-execution state for file tracking
             if self.file_manager:
-                logger.info(f"Starting file tracking for chat {self.chat_id}")
+                logger.info(f"Starting file tracking for workspace {self.workspace_id}")
                 self.file_manager.capture_pre_execution_state()
                 logger.info(
                     f"Pre-execution state captured, workspace: {self.file_manager.workspace_path}"
@@ -734,21 +823,33 @@ async def execute_code_jupyter(
     token: str = "",
     password: str = "",
     timeout: int = 60,
+    message_id: str = "",
     chat_id: str = "",
     data_dir: str = "data",
     kernel_init_code: str = "",
     user_id: str = "",
 ) -> dict:
+    # Get attached files from the specific message
+    attached_files = []
+    logger.info(f"Executing code for message {message_id} in chat {chat_id}")
+
+    if chat_id:
+        attached_files = get_attached_files_from_message(message_id, chat_id)
+
+    # Use message_id as workspace_id for better isolation
+    workspace_id = message_id or str(uuid.uuid4())
+
     async with EnterpriseGatewayCodeExecutor(
         base_url,
         code,
         token,
         password,
         timeout,
-        chat_id=chat_id,
+        workspace_id=workspace_id,
         data_dir=data_dir,
         kernel_init_code=kernel_init_code,
         user_id=user_id,
+        attached_files=attached_files,
     ) as executor:
         result = await executor.run()
         return result.model_dump()

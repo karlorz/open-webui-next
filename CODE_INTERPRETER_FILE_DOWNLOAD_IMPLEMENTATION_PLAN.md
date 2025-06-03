@@ -1,82 +1,90 @@
-# Code Interpreter File Download Implementation Plan - REVISED ARCHITECTURE
+# Code Interpreter File Download Implementation Plan - REVISED ARCHITECTURE: MESSAGE-BASED DESIGN
 
 ## ✅ CURRENT STATUS OVERVIEW
 
 ### ✅ COMPLETED FEATURES
 
-#### 1. Auto-Prepare File System
+#### 1. Message-Based Auto-Prepare File System
 
 - **Status**: ✅ FULLY IMPLEMENTED
 - **Location**: `backend/open_webui/utils/code_interpreter.py`
-- **Functionality**: Automatically prepares attached files for code execution
+- **Functionality**: Automatically prepares files attached to specific messages for code execution
 - **Features**:
-  - Symlink creation for file access
-  - Docker environment compatibility with fallback to file copying
+  - Message-specific file scanning via `get_attached_files_from_message(message_id, chat_id)`
+  - Symlink creation for file access with Docker environment compatibility
   - Comprehensive filesystem testing and validation
-  - Smart file linking with deduplication
+  - Smart file linking with deduplication per message
 
-#### 2. Path Translation System
+#### 2. Message-Based Path Translation System
 
 - **Status**: ✅ FULLY IMPLEMENTED
 - **Location**: `EnterpriseGatewayCodeExecutor` class
-- **Functionality**: Bidirectional path replacement between `/mnt/data` and actual workspace paths
+- **Functionality**: Bidirectional path replacement between `/mnt/data` and message-specific workspace paths
 - **Features**:
-  - Code translation before execution: `/mnt/data` → `data/uploads/{chat_id}`
-  - Result translation after execution: `data/uploads/{chat_id}` → `/mnt/data`
+  - Code translation before execution: `/mnt/data` → `data/uploads/{message_id}`
+  - Result translation after execution: `data/uploads/{message_id}` → `/mnt/data`
   - Transparent user experience with consistent `/mnt/data` paths
+  - Message-level workspace isolation
 
-#### 3. Chat-Specific Workspaces
+#### 3. Message-Specific Workspaces
 
 - **Status**: ✅ FULLY IMPLEMENTED
 - **Location**: Integrated throughout code interpreter system
-- **Functionality**: Isolated execution environments per chat
-- **Directory Structure**: `data/uploads/{chat_id}/` for each chat session
+- **Functionality**: Isolated execution environments per message (not chat)
+- **Directory Structure**: `data/uploads/{message_id}/` for each message execution
+- **Benefits**: Complete isolation, no cross-message file contamination
 
-#### 4. Modified Default Prompt Strategy
+#### 4. Enhanced Dynamic Prompt Strategy
 
 - **Status**: ✅ UPDATED
-- **Location**: `backend/open_webui/config.py`
-- **New Prompt**: "Save and persist output only if the user requests the format in Excel, CSV, or PDF file formats in the '/mnt/data' directory."
-- **Impact**: Files are only saved when explicitly requested in specific formats
-- **Image Handling**: Images auto-presented from cache folder (existing system)
+- **Location**: `backend/open_webui/utils/middleware.py`
+- **New Approach**: Message-specific file information injection via `generate_dynamic_code_interpreter_prompt()`
+- **Features**:
+  - Direct message file metadata access: `metadata.get("files", [])`
+  - Message ID context: `metadata.get("message_id", "")`
+  - Eliminates chat-level file scanning complexity
 
-#### 5. Jupyter Gateway Focus
+#### 5. Jupyter Gateway Focus with Message Isolation
 
 - **Status**: ✅ CONFIRMED
-- **Engine**: Jupyter/Enterprise Gateway (server-based) with full file system access
+- **Engine**: Jupyter/Enterprise Gateway (server-based) with message-specific file system access
 - **Pyodide**: ❌ NOT MODIFIED (browser-based engine remains unchanged)
 - **Image Handling**: Base64 image capture from matplotlib plots (existing cache system)
+- **Message Context**: Each execution uses `workspace_id = message_id` for complete isolation
 
-## 🔍 COMPATIBILITY ANALYSIS WITH EXISTING SYSTEM
+## 🔍 COMPATIBILITY ANALYSIS WITH MESSAGE-BASED SYSTEM
 
-### ✅ What Works Well with Existing System:
+### ✅ What Works Better with Message-Based Design:
 
-1. **Chat-specific workspaces** - Perfect alignment with `data/uploads/{chat_id}`
-2. **Path translation system** - No conflicts with `/mnt/data` mapping
-3. **File preparation system** - Doesn't interfere with new file creation tracking
+1. **Message-specific workspaces** - Perfect alignment with `data/uploads/{message_id}`
+2. **Direct file access** - No scanning required, direct message file lookup
+3. **Enhanced security** - Complete message-level isolation
+4. **Simplified logic** - Eliminates complex chat history scanning
+5. **Better performance** - Direct message file access vs chat scanning
 
-### ⚠️ INTEGRATION CONSIDERATIONS:
+### ⚠️ UPDATED INTEGRATION CONSIDERATIONS:
 
-#### 1. **File Storage System Integration**
+#### 1. **Message-Based File Storage System Integration**
 
-Your existing system likely has a `Files` model and storage service that tracks uploaded files. The original plan didn't integrate with this properly.
+Your existing system now leverages direct message file access instead of chat-level scanning, providing better precision and performance.
 
-#### 2. **Workspace vs Storage Separation**
+#### 2. **Workspace vs Storage Separation (Enhanced)**
 
-- **Workspace**: `data/uploads/{chat_id}/` (execution environment)
-- **Storage**: Likely separate file storage with metadata tracking
+- **Message Workspace**: `data/uploads/{message_id}/` (execution environment per message)
+- **Storage**: Separate file storage with metadata tracking (unchanged)
+- **Isolation**: Message-level boundaries instead of chat-level
 
-#### 3. **File Lifecycle Management**
+#### 3. **Message-Scoped File Lifecycle Management**
 
-New code-generated files need to be properly registered in your file storage system for persistence and management.
+New code-generated files are tied to specific messages for better organization and security.
 
-## 🏗️ REVISED ARCHITECTURE: NON-INVASIVE INTEGRATION
+## 🏗️ REVISED ARCHITECTURE: MESSAGE-FOCUSED NON-INVASIVE INTEGRATION
 
-### NEW STANDALONE CLASS: `CodeGeneratedFileManager`
+### UPDATED STANDALONE CLASS: `CodeGeneratedFileManager`
 
-Instead of modifying existing code, create a dedicated class that bridges code execution and file storage:
+Enhanced for message-based architecture:
 
-**NEW FILE NEEDED**: `backend/open_webui/utils/code_generated_file_manager.py`
+**UPDATED FILE NEEDED**: `backend/open_webui/utils/code_generated_file_manager.py`
 
 ```python
 import os
@@ -92,28 +100,31 @@ from open_webui.config import UPLOAD_DIR
 class CodeGeneratedFileManager:
     """
     Manages files generated by code execution and integrates with existing file storage system.
-    Keeps existing code unchanged while adding new functionality.
+    Enhanced for message-based architecture with complete message isolation.
     """
 
     TRACKED_EXTENSIONS = {'.xlsx', '.xls', '.csv', '.pdf'}
 
-    def __init__(self, chat_id: str, user_id: str, workspace_path: str):
+    def __init__(self, chat_id: str, user_id: str, workspace_path: str, message_id: str = ""):
         self.chat_id = chat_id
+        self.message_id = message_id or chat_id  # Use message_id as primary identifier
         self.user_id = user_id
         self.workspace_path = workspace_path
         self.initial_files: Set[str] = set()
         self.final_files: Set[str] = set()
 
     def capture_pre_execution_state(self):
-        """Capture workspace state before code execution"""
+        """Capture message workspace state before code execution"""
         self.initial_files = set(self._scan_tracked_files())
+        logger.info(f"Pre-execution state captured for message {self.message_id}, workspace: {self.workspace_path}")
 
     def capture_post_execution_state(self):
-        """Capture workspace state after code execution"""
+        """Capture message workspace state after code execution"""
         self.final_files = set(self._scan_tracked_files())
+        logger.info(f"Post-execution state captured for message {self.message_id}")
 
     def _scan_tracked_files(self) -> List[str]:
-        """Scan workspace for Excel, CSV, PDF files"""
+        """Scan message workspace for Excel, CSV, PDF files"""
         tracked_files = []
         if not os.path.exists(self.workspace_path):
             return tracked_files
@@ -127,7 +138,7 @@ class CodeGeneratedFileManager:
         return tracked_files
 
     def get_newly_generated_files(self) -> List[Dict]:
-        """Get files created during execution"""
+        """Get files created during message execution"""
         new_files = self.final_files - self.initial_files
         file_details = []
 
@@ -136,11 +147,12 @@ class CodeGeneratedFileManager:
             if os.path.isfile(full_path):
                 file_info = self._create_file_info(rel_path, full_path)
                 file_details.append(file_info)
+                logger.info(f"Found newly generated file: {file_info['name']} (Message: {self.message_id})")
 
         return file_details
 
     def _create_file_info(self, rel_path: str, full_path: str) -> Dict:
-        """Create file information dictionary"""
+        """Create file information dictionary with message context"""
         stat = os.stat(full_path)
         return {
             "name": os.path.basename(rel_path),
@@ -151,12 +163,15 @@ class CodeGeneratedFileManager:
             "modified_at": datetime.fromtimestamp(stat.st_mtime).isoformat(),
             "mime_type": self._get_mime_type(rel_path),
             "format": self._get_format_type(rel_path),
-            "extension": os.path.splitext(rel_path)[1].lower()
+            "extension": os.path.splitext(rel_path)[1].lower(),
+            "message_id": self.message_id,  # Add message context
+            "chat_id": self.chat_id
         }
 
     def register_files_to_storage(self, generated_files: List[Dict]) -> List[str]:
         """
         Register newly generated files with existing file storage system.
+        Enhanced with message-based metadata.
         Returns list of file_ids for the registered files.
         """
         registered_file_ids = []
@@ -166,22 +181,23 @@ class CodeGeneratedFileManager:
                 # Copy file to permanent storage location
                 file_id = self._copy_to_permanent_storage(file_info)
 
-                # Register with existing Files model
+                # Register with existing Files model with message context
                 db_file_id = self._register_with_file_model(file_info, file_id)
                 registered_file_ids.append(db_file_id)
+                logger.info(f"Registered file {file_info['name']} with ID {db_file_id} for message {self.message_id}")
 
             except Exception as e:
-                print(f"Failed to register file {file_info['name']}: {e}")
-                continue
+                logger.error(f"Failed to register file {file_info['name']} for message {self.message_id}: {e}")
+                registered_file_ids.append(None)
 
         return registered_file_ids
 
     def _copy_to_permanent_storage(self, file_info: Dict) -> str:
-        """Copy file from workspace to permanent storage"""
-        # Generate unique file ID
+        """Copy file from message workspace to permanent storage"""
+        # Generate unique file ID with message context
         file_content = open(file_info['full_path'], 'rb').read()
         file_hash = calculate_sha256(file_content)
-        file_id = f"code_gen_{self.chat_id}_{file_hash[:16]}"
+        file_id = f"code_gen_{self.message_id}_{file_hash[:16]}"
 
         # Create permanent storage path
         permanent_dir = os.path.join(UPLOAD_DIR, "code_generated")
@@ -190,12 +206,12 @@ class CodeGeneratedFileManager:
         # Copy file to permanent location
         permanent_path = os.path.join(permanent_dir, file_id)
         shutil.copy2(file_info['full_path'], permanent_path)
+        logger.info(f"Copied {file_info['name']} to permanent storage: {permanent_path}")
 
         return file_id
 
     def _register_with_file_model(self, file_info: Dict, file_id: str) -> str:
-        """Register file with existing Files model/database"""
-        # This integrates with your existing file storage system
+        """Register file with existing Files model/database with message metadata"""
         try:
             file_record = Files.insert_new_file(
                 user_id=self.user_id,
@@ -207,42 +223,25 @@ class CodeGeneratedFileManager:
                     "meta": {
                         "source": "code_execution",
                         "chat_id": self.chat_id,
+                        "message_id": self.message_id,  # Enhanced with message context
                         "generated_at": file_info['created_at'],
                         "format": file_info['format'],
-                        "original_workspace_path": file_info['relative_path']
+                        "original_workspace_path": file_info['relative_path'],
+                        "workspace_id": self.message_id  # Primary identifier
                     }
                 }
             )
             return file_record.id
         except Exception as e:
-            print(f"Failed to register file in database: {e}")
+            logger.error(f"Failed to register file in database for message {self.message_id}: {e}")
             return None
 
-    def _get_mime_type(self, filename: str) -> str:
-        """Get MIME type for file"""
-        ext = os.path.splitext(filename)[1].lower()
-        mime_types = {
-            '.xlsx': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-            '.xls': 'application/vnd.ms-excel',
-            '.csv': 'text/csv',
-            '.pdf': 'application/pdf'
-        }
-        return mime_types.get(ext, 'application/octet-stream')
-
-    def _get_format_type(self, filename: str) -> str:
-        """Get user-friendly format name"""
-        ext = os.path.splitext(filename)[1].lower()
-        formats = {
-            '.xlsx': 'Excel', '.xls': 'Excel',
-            '.csv': 'CSV',
-            '.pdf': 'PDF'
-        }
-        return formats.get(ext, 'Unknown')
+    # ...existing methods remain the same...
 
     @classmethod
-    def cleanup_workspace_files(cls, chat_id: str, keep_days: int = 7):
-        """Clean up old workspace files (optional cleanup utility)"""
-        workspace_path = os.path.join(UPLOAD_DIR, "uploads", chat_id)
+    def cleanup_message_workspace_files(cls, message_id: str, keep_days: int = 7):
+        """Clean up old message workspace files (enhanced cleanup utility)"""
+        workspace_path = os.path.join(UPLOAD_DIR, "uploads", message_id)
         if not os.path.exists(workspace_path):
             return
 
@@ -254,65 +253,149 @@ class CodeGeneratedFileManager:
                 if os.path.getctime(file_path) < cutoff_time:
                     try:
                         os.remove(file_path)
+                        logger.debug(f"Cleaned up old file: {file_path}")
                     except OSError:
                         pass
 ```
 
-### MINIMAL INTEGRATION WITH EXISTING CODE INTERPRETER
+### ENHANCED INTEGRATION WITH MESSAGE-BASED CODE INTERPRETER
 
-Modify the existing executor with minimal changes:
-
-**ENHANCE EXISTING FILE**: `backend/open_webui/utils/code_interpreter.py`
+**UPDATED FILE**: `backend/open_webui/utils/code_interpreter.py`
 
 ```python
-# Add import at top
-from open_webui.utils.code_generated_file_manager import CodeGeneratedFileManager
-
-# ...existing code remains unchanged...
+# ...existing imports and code...
 
 class EnterpriseGatewayCodeExecutor:
-    # ...existing methods remain unchanged...
+    """
+    Execute code in Jupyter Enterprise Gateway with message-based file management
+    """
+
+    def __init__(
+        self,
+        # ...existing parameters...
+        message_id: str = "",  # Enhanced with message_id
+        chat_id: str = "",     # Keep for compatibility
+        attached_files: List[Dict[str, Any]] = None,
+    ):
+        # ...existing initialization...
+
+        # Use message_id as primary workspace identifier
+        self.workspace_id = message_id or chat_id or str(uuid.uuid4())
+        self.message_id = message_id
+        self.chat_id = chat_id
+        self.attached_files = attached_files or []
+
+        # Initialize file manager with message context
+        self.file_manager = None
+        if self.workspace_id and self.user_id:
+            workspace_path = os.path.join(self.data_dir, "uploads", self.workspace_id)
+            self.file_manager = CodeGeneratedFileManager(
+                chat_id=self.chat_id,
+                message_id=self.message_id,  # Enhanced with message context
+                user_id=self.user_id,
+                workspace_path=workspace_path,
+            )
+
+        # ...existing code...
 
     async def run(self) -> ResultModel:
-        """Enhanced run method with file tracking - MINIMAL MODIFICATION"""
-        # Initialize file manager BEFORE execution
-        workspace_path = f"{self.data_dir}/uploads/{self.chat_id}" if self.chat_id else self.data_dir
-        file_manager = CodeGeneratedFileManager(
-            chat_id=self.chat_id,
-            user_id=getattr(self, 'user_id', None),  # Pass user_id if available
-            workspace_path=workspace_path
-        )
-        file_manager.capture_pre_execution_state()
+        """Enhanced run method with message-based file tracking"""
+        try:
+            # Auto-prepare message-specific files first
+            await self._auto_prepare_files()
 
-        # Execute existing code (NO CHANGES to existing logic)
-        result = await super().run()  # or your existing execution logic
+            # Capture pre-execution state for message workspace
+            if self.file_manager:
+                logger.info(f"Starting file tracking for message {self.message_id}, workspace: {self.workspace_id}")
+                self.file_manager.capture_pre_execution_state()
 
-        # Process generated files AFTER execution
-        file_manager.capture_post_execution_state()
-        generated_files = file_manager.get_newly_generated_files()
+            # ...existing execution code unchanged...
+            await self.setup_auth()
+            await self.init_kernel()
+            await self.execute_code()
 
-        if generated_files:
-            # Register files with storage system
-            registered_file_ids = file_manager.register_files_to_storage(generated_files)
+            # Capture post-execution state and register generated files
+            if self.file_manager:
+                logger.info("Capturing post-execution state for message-based file tracking")
+                self.file_manager.capture_post_execution_state()
+                generated_files = self.file_manager.get_newly_generated_files()
 
-            # Add to result for frontend
-            if hasattr(result, 'generated_files'):
-                result.generated_files.extend(generated_files)
-            else:
-                result.generated_files = generated_files
+                if generated_files:
+                    logger.info(f"Found {len(generated_files)} newly generated files for message {self.message_id}")
 
-            # Store file IDs for later retrieval
-            if hasattr(result, 'generated_file_ids'):
-                result.generated_file_ids.extend(registered_file_ids)
-            else:
-                result.generated_file_ids = registered_file_ids
+                    # Register files to storage with message context
+                    registered_file_ids = self.file_manager.register_files_to_storage(generated_files)
 
-        return result
+                    # Add file information to the result
+                    if not hasattr(self.result, "files"):
+                        self.result.files = []
+
+                    for file_info, file_id in zip(generated_files, registered_file_ids):
+                        if file_id:
+                            file_data = {
+                                "id": file_id,
+                                "name": file_info["name"],
+                                "url": f"/api/v1/files/{file_id}/content",
+                                "size": file_info["size"],
+                                "format": file_info["format"],
+                                "message_id": self.message_id,  # Enhanced with message context
+                                "chat_id": self.chat_id
+                            }
+                            self.result.files.append(file_data)
+                            logger.info(f"Added file to result: {file_data}")
+
+                    logger.info(f"Successfully registered {len([fid for fid in registered_file_ids if fid])} files to storage for message {self.message_id}")
+                else:
+                    logger.info(f"No new files generated during execution for message {self.message_id}")
+
+        except Exception as err:
+            logger.exception(f"Execute code failed for message {self.message_id}: {err}")
+            self.result.stderr = f"Error: {err}"
+
+        return self.result
+
+# Updated main execution function
+async def execute_code_jupyter(
+    base_url: str,
+    code: str,
+    token: str = "",
+    password: str = "",
+    timeout: int = 60,
+    message_id: str = "",  # Enhanced parameter
+    chat_id: str = "",     # Keep for compatibility
+    data_dir: str = "data",
+    kernel_init_code: str = "",
+    user_id: str = "",
+) -> dict:
+    # Get attached files from the specific message
+    attached_files = []
+    if message_id and chat_id:
+        attached_files = get_attached_files_from_message(message_id, chat_id)
+
+    # Use message_id as primary workspace_id
+    workspace_id = message_id or str(uuid.uuid4())
+
+    async with EnterpriseGatewayCodeExecutor(
+        base_url,
+        code,
+        token,
+        password,
+        timeout,
+        workspace_id=workspace_id,
+        message_id=message_id,  # Enhanced with message context
+        chat_id=chat_id,
+        data_dir=data_dir,
+        kernel_init_code=kernel_init_code,
+        user_id=user_id,
+        attached_files=attached_files,
+    ) as executor:
+        result = await executor.run()
+        return result.model_dump()
 ```
 
-### ENHANCED DOWNLOAD API WITH STORAGE INTEGRATION
+### ENHANCED DOWNLOAD API WITH MESSAGE-BASED ORGANIZATION
 
-**NEW FILE NEEDED**: `backend/open_webui/routers/downloads.py`
+**UPDATED FILE**: `backend/open_webui/routers/downloads.py`
 
 ```python
 from fastapi import APIRouter, HTTPException, Depends
@@ -322,19 +405,19 @@ from open_webui.utils.auth import get_current_user
 
 router = APIRouter()
 
-@router.get("/code-execution/{chat_id}/files")
-async def list_generated_files(
-    chat_id: str,
+@router.get("/code-execution/{message_id}/files")
+async def list_generated_files_by_message(
+    message_id: str,
     user=Depends(get_current_user)
 ):
-    """List files generated by code execution using existing storage system"""
-    # Query existing Files model for code-generated files
+    """List files generated by code execution for a specific message"""
+    # Query existing Files model for message-specific code-generated files
     files = Files.get_files_by_user_id(user.id)
 
-    code_generated_files = [
+    message_generated_files = [
         f for f in files
         if f.meta and f.meta.get('source') == 'code_execution'
-        and f.meta.get('chat_id') == chat_id
+        and f.meta.get('message_id') == message_id  # Enhanced message filtering
     ]
 
     return [
@@ -344,10 +427,49 @@ async def list_generated_files(
             "size": f.size,
             "format": f.meta.get('format', 'Unknown'),
             "created_at": f.created_at.isoformat(),
+            "message_id": f.meta.get('message_id'),
+            "chat_id": f.meta.get('chat_id'),
             "download_url": f"/api/v1/downloads/code-execution/file/{f.id}"
         }
-        for f in code_generated_files
+        for f in message_generated_files
     ]
+
+@router.get("/code-execution/chat/{chat_id}/files")
+async def list_generated_files_by_chat(
+    chat_id: str,
+    user=Depends(get_current_user)
+):
+    """List all files generated by code execution across messages in a chat"""
+    files = Files.get_files_by_user_id(user.id)
+
+    chat_generated_files = [
+        f for f in files
+        if f.meta and f.meta.get('source') == 'code_execution'
+        and f.meta.get('chat_id') == chat_id
+    ]
+
+    # Group by message for better organization
+    message_groups = {}
+    for f in chat_generated_files:
+        msg_id = f.meta.get('message_id', 'unknown')
+        if msg_id not in message_groups:
+            message_groups[msg_id] = []
+
+        message_groups[msg_id].append({
+            "id": f.id,
+            "name": f.filename,
+            "size": f.size,
+            "format": f.meta.get('format', 'Unknown'),
+            "created_at": f.created_at.isoformat(),
+            "message_id": f.meta.get('message_id'),
+            "download_url": f"/api/v1/downloads/code-execution/file/{f.id}"
+        })
+
+    return {
+        "chat_id": chat_id,
+        "total_files": len(chat_generated_files),
+        "messages": message_groups
+    }
 
 @router.get("/code-execution/file/{file_id}")
 async def download_generated_file(
@@ -369,225 +491,64 @@ async def download_generated_file(
     return Files.serve_file(file_record)
 ```
 
-### REGISTER DOWNLOADS ROUTER
+## ✅ BENEFITS OF MESSAGE-BASED ARCHITECTURE:
 
-**ENHANCE EXISTING FILE**: `backend/open_webui/main.py`
+1. **Complete Message Isolation**: Each message execution is completely isolated from others
+2. **Precise File Access**: Only files attached to the specific message are available
+3. **Enhanced Security**: No cross-message file contamination possible
+4. **Simplified Logic**: Direct message file lookup eliminates chat scanning complexity
+5. **Better Performance**: No need to scan entire chat history for files
+6. **Clear Organization**: Files are organized by message for better user experience
+7. **Workspace Efficiency**: Each message gets its own clean workspace
+8. **Storage Integration**: Message-based metadata in existing file storage system
 
-```python
-# ...existing imports...
-from open_webui.routers import downloads
+## 🔧 UPDATED IMPLEMENTATION CHECKLIST:
 
-# ...existing code...
-
-# Add the downloads router
-app.include_router(downloads.router, prefix="/api/v1/downloads", tags=["downloads"])
-
-# ...existing code...
-```
-
-## Phase 2: Frontend Integration
-
-### ENHANCED CODEBLOCK COMPONENT WITH STORAGE INTEGRATION
-
-**MODIFY EXISTING FILE**: `src/lib/components/chat/Messages/CodeBlock.svelte`
-
-```svelte
-<script lang="ts">
-	// ...existing imports and code...
-
-	// ADD these new variables for generated file downloads:
-	let generatedFiles = [];
-	let showGeneratedFilesPanel = false;
-	let isLoadingGeneratedFiles = false;
-
-	const fetchGeneratedFiles = async (chatId) => {
-		if (!chatId) return;
-
-		isLoadingGeneratedFiles = true;
-		try {
-			const response = await fetch(
-				`${WEBUI_API_BASE_URL}/downloads/code-execution/${chatId}/files`,
-				{
-					headers: {
-						Authorization: `Bearer ${localStorage.token}`
-					}
-				}
-			);
-
-			if (response.ok) {
-				generatedFiles = await response.json();
-				showGeneratedFilesPanel = generatedFiles.length > 0;
-			}
-		} catch (error) {
-			console.error('Failed to fetch generated files:', error);
-		} finally {
-			isLoadingGeneratedFiles = false;
-		}
-	};
-
-	// MODIFY existing executePython function to add file detection:
-	const executePython = async (code) => {
-		// ...existing execution code unchanged...
-
-		// ADD after successful execution:
-		if (chatId && !error) {
-			// Check for requested file formats in the execution
-			const hasRequestedFormats = /\.(xlsx?|csv|pdf)\b/i.test(code) || /excel|csv|pdf/i.test(code);
-
-			if (hasRequestedFormats) {
-				setTimeout(() => fetchGeneratedFiles(chatId), 1000);
-			}
-		}
-	};
-
-	// Utility functions for generated files
-	const getFormatIcon = (format) => {
-		const icons = {
-			Excel: '📊',
-			CSV: '📋',
-			PDF: '📑'
-		};
-		return icons[format] || '📄';
-	};
-
-	const formatFileSize = (bytes) => {
-		if (bytes === 0) return '0 Bytes';
-		const k = 1024;
-		const sizes = ['Bytes', 'KB', 'MB', 'GB'];
-		const i = Math.floor(Math.log(bytes) / Math.log(k));
-		return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
-	};
-
-	const downloadGeneratedFile = (file) => {
-		const link = document.createElement('a');
-		link.href = file.download_url;
-		link.download = file.name;
-		link.target = '_blank';
-		document.body.appendChild(link);
-		link.click();
-		document.body.removeChild(link);
-	};
-</script>
-
-<!-- ...existing template code for execution results... -->
-
-<!-- ADD generated files panel after execution results -->
-{#if showGeneratedFilesPanel}
-	<div
-		class="mt-4 p-4 bg-green-50 dark:bg-green-900 rounded-lg border border-green-200 dark:border-green-700"
-	>
-		<div class="flex items-center justify-between mb-3">
-			<div class="flex items-center gap-2">
-				<div class="text-sm font-medium text-green-800 dark:text-green-200">
-					📁 Generated Files Available
-				</div>
-				<span
-					class="px-2 py-1 bg-green-200 dark:bg-green-800 text-green-800 dark:text-green-200 text-xs rounded-full"
-				>
-					{generatedFiles.length}
-				</span>
-			</div>
-		</div>
-
-		{#if isLoadingGeneratedFiles}
-			<div class="text-center py-4">
-				<div class="animate-spin rounded-full h-6 w-6 border-b-2 border-green-500 mx-auto"></div>
-				<div class="text-xs text-green-600 dark:text-green-300 mt-2">
-					Loading generated files...
-				</div>
-			</div>
-		{:else}
-			<div class="grid grid-cols-1 md:grid-cols-2 gap-3">
-				{#each generatedFiles as file}
-					<div
-						class="flex items-center justify-between p-3 bg-white dark:bg-gray-700 rounded-lg border hover:shadow-sm transition-shadow"
-					>
-						<div class="flex items-center gap-3 flex-1 min-w-0">
-							<div class="text-lg">{getFormatIcon(file.format)}</div>
-							<div class="flex-1 min-w-0">
-								<div class="text-sm font-medium truncate" title={file.name}>
-									{file.name}
-								</div>
-								<div class="text-xs text-gray-500 flex gap-2">
-									<span>{formatFileSize(file.size)}</span>
-									<span>•</span>
-									<span class="font-medium text-green-600 dark:text-green-400">{file.format}</span>
-								</div>
-							</div>
-						</div>
-						<button
-							on:click={() => downloadGeneratedFile(file)}
-							class="ml-2 px-3 py-1 bg-green-500 hover:bg-green-600 text-white text-xs rounded transition-colors"
-							title="Download {file.name}"
-						>
-							⬇️ Download
-						</button>
-					</div>
-				{/each}
-			</div>
-
-			<div class="mt-3 text-xs text-green-600 dark:text-green-300">
-				💡 Files are automatically saved when you request Excel, CSV, or PDF formats
-			</div>
-		{/if}
-	</div>
-{/if}
-
-<!-- ...existing template code... -->
-```
-
-## ✅ BENEFITS OF THIS REVISED APPROACH:
-
-1. **Zero Existing Code Modification**: Your current code interpreter remains untouched
-2. **Full Storage Integration**: Files automatically appear in your existing file management system
-3. **Consistent API**: Leverages existing file serving infrastructure
-4. **Proper Metadata**: Files tagged with source, chat_id, format information
-5. **User Ownership**: Files properly associated with users
-6. **Cleanup Ready**: Integrates with existing file cleanup systems
-
-## 🔧 IMPLEMENTATION CHECKLIST:
-
-- [ ] Create `CodeGeneratedFileManager` class
-- [ ] Add minimal hook in `EnterpriseGatewayCodeExecutor.run()`
-- [ ] Create download API that uses existing `Files` model
-- [ ] Test file generation → storage → download workflow
-- [ ] Verify integration with existing file cleanup systems
+- [x] Create message-based file scanning function ✅ DONE
+- [x] Update workspace creation to use message_id ✅ DONE
+- [x] Enhance path translation for message workspaces ✅ DONE
+- [x] Update middleware to pass message-specific files ✅ DONE
+- [x] Modify frontend to send message_id and chat_id ✅ DONE
+- [ ] **ENHANCE**: `CodeGeneratedFileManager` with message context
+- [ ] **UPDATE**: Download API for message-based file organization
+- [ ] **TEST**: Message-specific file generation → storage → download workflow
 
 ## 🎯 UPDATED IMPLEMENTATION PRIORITIES
 
-### ✅ WEEK 1: Clean File Manager Integration (Build on Existing System)
+### ✅ WEEK 1: Message-Based File Manager Integration (Build on Enhanced System)
 
-- [x] Auto-prepare system ✅ DONE
-- [x] Path translation ✅ DONE
-- [x] Workspace isolation ✅ DONE
-- [x] Modified prompt strategy ✅ DONE
-- [ ] **ADD**: `CodeGeneratedFileManager` class for clean integration
-- [ ] **ADD**: Minimal executor enhancement
-- [ ] **TEST**: File creation → storage integration
+- [x] Message-based auto-prepare system ✅ DONE
+- [x] Message-specific path translation ✅ DONE
+- [x] Message workspace isolation ✅ DONE
+- [x] Message file scanning implementation ✅ DONE
+- [ ] **ENHANCE**: `CodeGeneratedFileManager` class with message context
+- [ ] **UPDATE**: Executor enhancement for message-based tracking
+- [ ] **TEST**: Message-specific file creation → storage integration
 
-### 🔄 WEEK 2: Storage-Integrated Download API
+### 🔄 WEEK 2: Message-Organized Download API
 
-- [ ] **ADD**: Downloads router using existing `Files` model
-- [ ] **ADD**: Storage-based file listing and serving
-- [ ] **TEST**: End-to-end file generation → storage → download
-- [ ] **VERIFY**: Security and user isolation
+- [ ] **ENHANCE**: Downloads router with message-based endpoints
+- [ ] **ADD**: Message-specific file listing and serving
+- [ ] **ADD**: Chat-level file organization (grouped by message)
+- [ ] **TEST**: End-to-end message file generation → storage → download
+- [ ] **VERIFY**: Message-level security and user isolation
 
-### 📦 WEEK 3: Frontend and Optimization
+### 📦 WEEK 3: Frontend and Message Integration
 
-- [ ] **ENHANCE**: `CodeBlock.svelte` with storage-integrated file panel
-- [ ] **ADD**: Format-specific UI and user guidance
-- [ ] **TEST**: Complete user workflow
-- [ ] **OPTIMIZE**: Performance and cleanup integration
+- [ ] **ENHANCE**: `CodeBlock.svelte` with message-aware file panel
+- [ ] **ADD**: Message-specific file detection and UI
+- [ ] **TEST**: Complete user workflow with message isolation
+- [ ] **OPTIMIZE**: Performance and message workspace cleanup
 
-## 🔑 LEVERAGING EXISTING INFRASTRUCTURE
+## 🔑 LEVERAGING MESSAGE-BASED INFRASTRUCTURE
 
-This revised approach maintains all your existing strengths while cleanly adding the new functionality:
+This message-focused approach enhances all your existing strengths:
 
-1. **✅ File Access**: Auto-prepare system handles input files perfectly
-2. **✅ Path Consistency**: Path translation ensures `/mnt/data` works transparently
-3. **✅ Isolation**: Chat-specific workspaces provide security
-4. **✅ Storage Integration**: New files automatically enter your existing file management system
-5. **✅ User Management**: Files properly owned and secured by user
-6. **✅ Cleanup Systems**: Existing file cleanup automatically handles new files
+1. **✅ Message File Access**: Enhanced auto-prepare system handles message-specific input files
+2. **✅ Message Path Consistency**: Path translation ensures `/mnt/data` works with message workspaces
+3. **✅ Message Isolation**: Complete message-specific workspace isolation for security
+4. **✅ Storage Integration**: New files automatically enter existing file system with message metadata
+5. **✅ User Management**: Files properly owned and secured by user with message context
+6. **✅ Cleanup Systems**: Existing file cleanup enhanced with message workspace management
 
-The focused approach significantly reduces implementation complexity while delivering exactly what users need: downloadable business files (Excel, CSV, PDF) when they explicitly request them, fully integrated with your existing file storage infrastructure.
+The message-based approach delivers superior isolation, better performance, and cleaner architecture while providing exactly what users need: downloadable business files (Excel, CSV, PDF) when they explicitly request them, organized by message for optimal user experience.

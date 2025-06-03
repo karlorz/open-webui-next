@@ -48,6 +48,7 @@
 	import ContentRenderer from './ContentRenderer.svelte';
 	import { KokoroWorker } from '$lib/workers/KokoroWorker';
 	import FileItem from '$lib/components/common/FileItem.svelte';
+	import FileDownloadPanel from '$lib/components/common/FileDownloadPanel.svelte';
 
 	interface MessageType {
 		id: string;
@@ -153,6 +154,51 @@
 	let generatingImage = false;
 
 	let showRateComment = false;
+
+	// Extract downloadable files from this specific message
+	let messageFiles = [];
+	$: messageFiles = (() => {
+		const files = [];
+
+		// Check if message has files attached
+		if (message.files && Array.isArray(message.files)) {
+			files.push(...message.files);
+		}
+
+		// Check message content for code execution results with files
+		if (message.content && typeof message.content === 'string') {
+			try {
+				// Look for details elements with code interpreter output
+				const detailsRegex = /<details[^>]*output="([^"]*)"[^>]*>/g;
+				let match;
+				while ((match = detailsRegex.exec(message.content)) !== null) {
+					try {
+						const outputData = JSON.parse(match[1].replace(/&quot;/g, '"').replace(/&#x27;/g, "'"));
+						if (outputData.files && Array.isArray(outputData.files)) {
+							files.push(
+								...outputData.files.map((file) => ({
+									...file,
+									messageId: message.id
+								}))
+							);
+						}
+					} catch (e) {
+						// Silent fail for parsing errors
+					}
+				}
+			} catch (e) {
+				// Silent fail for content parsing errors
+			}
+		}
+
+		return files
+			.filter((file) => file && file.id && file.name) // Only include valid files
+			.filter(
+				(file, index, array) =>
+					// Remove duplicates based on file ID
+					array.findIndex((f) => f.id === file.id) === index
+			);
+	})();
 
 	const copyToClipboard = async (text) => {
 		text = removeAllDetails(text);
@@ -858,6 +904,16 @@
 				</div>
 
 				{#if !edit}
+					<!-- FileDownloadPanel for this specific message -->
+					{#if messageFiles.length > 0}
+						<FileDownloadPanel
+							files={messageFiles}
+							title={$i18n.t('Generated Files')}
+							subtitle={$i18n.t('Files from this message')}
+							showRefreshButton={false}
+						/>
+					{/if}
+
 					<div
 						bind:this={buttonsContainerElement}
 						class="flex justify-start overflow-x-auto buttons text-gray-600 dark:text-gray-500 mt-0.5"

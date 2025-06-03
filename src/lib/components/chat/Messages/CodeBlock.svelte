@@ -142,13 +142,21 @@
 		executing = true;
 
 		if ($config?.code?.engine === 'jupyter') {
-			// Get chat ID from the current page parameters
+			// Get chat ID and message ID from the current page parameters and context
 			const chatId = $page?.params?.id || '';
+			// const chatId = '';
+			const messageId = id || '';
+			// Extract original parent ID - take only the UUID part (first 5 segments)
+			const parts = messageId.split('-');
+			const originalId = parts.length >= 5 ? parts.slice(0, 5).join('-') : messageId;
+			console.log(`messageId: ${messageId}, originalId: ${originalId}`);
 
-			const output = await executeCode(localStorage.token, code, chatId).catch((error) => {
-				toast.error(`${error}`);
-				return null;
-			});
+			const output = await executeCode(localStorage.token, code, originalId, chatId).catch(
+				(error) => {
+					toast.error(`${error}`);
+					return null;
+				}
+			);
 
 			if (output) {
 				// Handle stdout and extract images

@@ -854,14 +854,14 @@ async def process_chat_payload(request, form_data, user, metadata, model):
                 else DEFAULT_CODE_INTERPRETER_PROMPT
             )
 
-            # Get attached files from metadata
+            # Get attached files from the current message metadata
             attached_files = metadata.get("files", [])
 
             # Generate enhanced prompt with file information
             enhanced_prompt = generate_dynamic_code_interpreter_prompt(
                 base_prompt=base_prompt,
                 attached_files=attached_files,
-                chat_id=metadata.get("chat_id", ""),
+                message_id=metadata.get("message_id", ""),
             )
 
             form_data["messages"] = add_or_update_user_message(
