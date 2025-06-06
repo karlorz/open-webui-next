@@ -494,8 +494,9 @@ class EnterpriseGatewayCodeExecutor:
 import os
 import sys
 import matplotlib.pyplot as plt
+import warnings
+warnings.filterwarnings('ignore')
 
-# Set up Chinese font support
 font_names = [
     'WenQuanYi Micro Hei',
     'Noto Sans CJK SC',
@@ -504,11 +505,7 @@ font_names = [
 ]
 plt.rcParams['font.sans-serif'] = font_names
 plt.rcParams['axes.unicode_minus'] = False
-
-print("Kernel initialized successfully")
-print(f"Python version: {sys.version}")
-print(f"Working directory: {os.getcwd()}")
-""".strip()
+"""
 
     def _prepare_code_with_path_replacement(self, code: str) -> str:
         """Replace /mnt/data with workspace-specific path before execution"""
@@ -699,12 +696,82 @@ print(f"Working directory: {os.getcwd()}")
         logger.debug(f"Connecting to WebSocket at {websocket_url}")
         return websocket_url, self.headers
 
+    async def execute_init_code(self, ws) -> None:
+        """Execute kernel initialization code using existing WebSocket connection"""
+        if not self.kernel_init_code.strip():
+            logger.debug("No kernel initialization code to execute")
+            return
+
+        logger.info("Executing kernel initialization code")
+        logger.debug(f"Kernel init code:\n{self.kernel_init_code}")
+        try:
+            # Send init code execution request
+            msg_id = str(uuid.uuid4())
+            request = {
+                "header": {
+                    "msg_id": msg_id,
+                    "msg_type": "execute_request",
+                    "username": self.username,
+                    "session": str(uuid.uuid4()),
+                    "version": "5.4",
+                },
+                "parent_header": {},
+                "metadata": {},
+                "content": {
+                    "code": self.kernel_init_code,
+                    "silent": False,  # Don't show output from init code
+                    "store_history": False,  # Don't store in history
+                    "user_expressions": {},
+                    "allow_stdin": False,
+                    "stop_on_error": True,
+                },
+                "buffers": [],
+                "channel": "shell",
+            }
+
+            await ws.send(json.dumps(request))
+
+            # Wait for completion - only check execute_reply status
+            while True:
+                try:
+                    message = await asyncio.wait_for(
+                        ws.recv(), 30
+                    )  # 30s timeout for init
+                    response = json.loads(message)
+
+                    # Only process our message
+                    if response.get("parent_header", {}).get("msg_id") != msg_id:
+                        continue
+
+                    msg_type = response.get("msg_type")
+
+                    # Only care about the final execute_reply status
+                    if msg_type == "execute_reply":
+                        status = response["content"]["status"]
+                        if status == "ok":
+                            logger.info("Kernel initialization completed successfully")
+                        elif status == "error":
+                            logger.warning("Kernel initialization failed")
+                        break
+
+                except asyncio.TimeoutError:
+                    logger.warning("Kernel initialization timed out")
+                    break
+
+        except Exception as e:
+            logger.error(f"Failed to execute kernel initialization code: {e}")
+
     async def execute_code(self) -> None:
         websocket_url, headers = self.init_ws()
         try:
             async with websockets.connect(
                 websocket_url, additional_headers=headers
             ) as ws:
+                # Execute initialization code first if provided
+                if self.kernel_init_code.strip():
+                    await self.execute_init_code(ws)
+
+                # Then execute the main user code
                 await self.execute_in_gateway(ws)
         except websockets.exceptions.WebSocketException as e:
             logger.error(f"WebSocket error: {e}")
@@ -788,7 +855,13 @@ print(f"Working directory: {os.getcwd()}")
                         "evalue": response["content"]["evalue"],
                         "traceback": response["content"]["traceback"],
                     }
-                    stderr_content += "\n".join(error["traceback"])
+
+                    # Trim traceback to prevent UI message overflow
+                    trim_traceback = (
+                        error["traceback"][-1:] if error["traceback"] else []
+                    )
+                    if trim_traceback:
+                        stderr_content += "\n".join(trim_traceback)
 
                 elif msg_type == "execute_reply":
                     status = response["content"]["status"]

@@ -2330,6 +2330,9 @@ async def process_chat_response(
                                 },
                                 user,
                             )
+                            log.debug(
+                                f"Code interpreter response: {serialize_content_blocks(content_blocks, raw=True)}"
+                            )
 
                             if isinstance(res, StreamingResponse):
                                 await stream_body_handler(res)

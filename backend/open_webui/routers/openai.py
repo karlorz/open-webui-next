@@ -826,6 +826,15 @@ async def generate_chat_completion(
         request_url = f"{url}/chat/completions"
         headers["Authorization"] = f"Bearer {key}"
 
+    # Hunyuan API specific validation
+    if "hunyuan" in url.lower() or "tencent" in url.lower():
+        messages = payload.get("messages", [])
+        if messages and messages[-1].get("role") != "user":
+            # Add a dummy user message if needed
+            payload["messages"].append(
+                {"role": "user", "content": "Please continue with your response."}
+            )
+
     payload = json.dumps(payload)
 
     r = None
