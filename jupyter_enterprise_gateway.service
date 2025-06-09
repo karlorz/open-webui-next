@@ -5,8 +5,9 @@ After=network.target
 [Service]
 Type=exec
 WorkingDirectory=/opt/open-webui/backend
+Environment=PATH=/root/.local/bin:/root/.nvm/versions/node/v22.16.0/bin:/usr/local/bin:/usr/bin:/bin
 EnvironmentFile=/opt/open-webui/.env
-ExecStart=uv run jupyter enterprisegateway --port 8889
+ExecStart=/root/.local/bin/uv run jupyter enterprisegateway --port 8889
 
 [Install]
 WantedBy=multi-user.target

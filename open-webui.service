@@ -5,6 +5,7 @@ After=network.target
 [Service]
 Type=exec
 WorkingDirectory=/opt/open-webui
+Environment=PATH=/root/.local/bin:/root/.nvm/versions/node/v22.16.0/bin:/usr/local/bin:/usr/bin:/bin
 EnvironmentFile=/opt/open-webui/.env
 ExecStart=/opt/open-webui/backend/start.sh
 
