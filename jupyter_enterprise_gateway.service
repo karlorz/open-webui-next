@@ -1,0 +1,12 @@
+[Unit]
+Description=Jupyter Enterprisegateway Service
+After=network.target
+
+[Service]
+Type=exec
+WorkingDirectory=/opt/open-webui/backend
+EnvironmentFile=/opt/open-webui/.env
+ExecStart=uv run jupyter enterprisegateway --port 8889
+
+[Install]
+WantedBy=multi-user.target

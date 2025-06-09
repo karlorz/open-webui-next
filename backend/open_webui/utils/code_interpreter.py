@@ -909,8 +909,8 @@ async def execute_code_jupyter(
     if chat_id:
         attached_files = get_attached_files_from_message(message_id, chat_id)
 
-    # Use message_id as workspace_id for better isolation
-    workspace_id = message_id or str(uuid.uuid4())
+    # Use chat_id (or switch to message_id) as workspace_id
+    workspace_id = chat_id or str(uuid.uuid4())
 
     async with EnterpriseGatewayCodeExecutor(
         base_url,

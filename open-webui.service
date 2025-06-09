@@ -1,0 +1,12 @@
+[Unit]
+Description=Open WebUI Service
+After=network.target
+
+[Service]
+Type=exec
+WorkingDirectory=/opt/open-webui
+EnvironmentFile=/opt/open-webui/.env
+ExecStart=/opt/open-webui/backend/start.sh
+
+[Install]
+WantedBy=multi-user.target
