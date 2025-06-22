@@ -14,7 +14,7 @@ from langchain_community.document_loaders import (
     TextLoader,
     UnstructuredEPubLoader,
     UnstructuredExcelLoader,
-    UnstructuredMarkdownLoader,
+    UnstructuredODTLoader,
     UnstructuredPowerPointLoader,
     UnstructuredRSTLoader,
     UnstructuredXMLLoader,
@@ -162,15 +162,15 @@ class DoclingLoader:
                     if picture_description_mode == "local" and self.params.get(
                         "picture_description_local", {}
                     ):
-                        params["picture_description_local"] = self.params.get(
-                            "picture_description_local", {}
+                        params["picture_description_local"] = json.dumps(
+                            self.params.get("picture_description_local", {})
                         )
 
                     elif picture_description_mode == "api" and self.params.get(
                         "picture_description_api", {}
                     ):
-                        params["picture_description_api"] = self.params.get(
-                            "picture_description_api", {}
+                        params["picture_description_api"] = json.dumps(
+                            self.params.get("picture_description_api", {})
                         )
 
                 if self.params.get("ocr_engine") and self.params.get("ocr_lang"):
@@ -389,6 +389,8 @@ class Loader:
                 loader = UnstructuredPowerPointLoader(file_path)
             elif file_ext == "msg":
                 loader = OutlookMessageLoader(file_path)
+            elif file_ext == "odt":
+                loader = UnstructuredODTLoader(file_path)
             elif self._is_text_file(file_ext, file_content_type):
                 loader = TextLoader(file_path, autodetect_encoding=True)
             else:

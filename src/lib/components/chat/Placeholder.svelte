@@ -107,7 +107,7 @@
 		class="w-full text-3xl text-gray-800 dark:text-gray-100 text-center flex items-center gap-4 font-primary"
 	>
 		<div class="w-full flex flex-col justify-center items-center">
-			<div class="flex flex-row justify-center gap-3 @sm:gap-3.5 w-fit px-5">
+			<div class="flex flex-row justify-center gap-3 @sm:gap-3.5 w-fit px-5 max-w-xl">
 				<div class="flex shrink-0 justify-center">
 					<div class="flex -space-x-4 mb-0.5" in:fade={{ duration: 100 }}>
 						{#each models as model, modelIdx}
@@ -138,9 +138,20 @@
 					</div>
 				</div>
 
-				<div class=" text-3xl @sm:text-3xl line-clamp-1" in:fade={{ duration: 100 }}>
+				<div
+					class=" text-3xl @sm:text-3xl line-clamp-1 flex items-center"
+					in:fade={{ duration: 100 }}
+				>
 					{#if models[selectedModelIdx]?.name}
-						{models[selectedModelIdx]?.name}
+						<Tooltip
+							content={models[selectedModelIdx]?.name}
+							placement="top"
+							className=" flex items-center "
+						>
+							<span class="line-clamp-1">
+								{models[selectedModelIdx]?.name}
+							</span>
+						</Tooltip>
 					{:else}
 						{$i18n.t('Hello, {{name}}', { name: $user?.name })}
 					{/if}
@@ -153,7 +164,9 @@
 						<Tooltip
 							className=" w-fit"
 							content={marked.parse(
-								sanitizeResponseContent(models[selectedModelIdx]?.info?.meta?.description ?? '')
+								sanitizeResponseContent(
+									models[selectedModelIdx]?.info?.meta?.description ?? ''
+								).replaceAll('\n', '<br>')
 							)}
 							placement="top"
 						>
@@ -161,7 +174,9 @@
 								class="mt-0.5 px-2 text-sm font-normal text-gray-500 dark:text-gray-400 line-clamp-2 max-w-xl markdown"
 							>
 								{@html marked.parse(
-									sanitizeResponseContent(models[selectedModelIdx]?.info?.meta?.description)
+									sanitizeResponseContent(
+										models[selectedModelIdx]?.info?.meta?.description ?? ''
+									).replaceAll('\n', '<br>')
 								)}
 							</div>
 						</Tooltip>
@@ -205,10 +220,12 @@
 					{createMessagePair}
 					placeholder={$i18n.t('How can I help you today?')}
 					onChange={(input) => {
-						if (input.prompt !== null) {
-							localStorage.setItem(`chat-input`, JSON.stringify(input));
-						} else {
-							localStorage.removeItem(`chat-input`);
+						if (!$temporaryChatEnabled) {
+							if (input.prompt !== null) {
+								sessionStorage.setItem(`chat-input`, JSON.stringify(input));
+							} else {
+								sessionStorage.removeItem(`chat-input`);
+							}
 						}
 					}}
 					on:upload={(e) => {
