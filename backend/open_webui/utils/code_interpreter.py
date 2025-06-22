@@ -808,6 +808,7 @@ plt.rcParams['axes.unicode_minus'] = False
 
         await ws.send(json.dumps(request))
 
+
         # Parse responses
         stdout_content, stderr_content = "", ""
         results = []
