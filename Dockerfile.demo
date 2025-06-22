@@ -1,0 +1,119 @@
+# syntax=docker/dockerfile:1
+# Demo Mode Dockerfile for Open WebUI
+# This Dockerfile is specifically configured for demo/guest mode operation
+
+# Initialize device type args
+ARG USE_CUDA=false
+ARG USE_OLLAMA=false
+ARG USE_CUDA_VER=cu128
+ARG USE_EMBEDDING_MODEL=sentence-transformers/all-MiniLM-L6-v2
+ARG USE_RERANKING_MODEL=""
+ARG USE_TIKTOKEN_ENCODING_NAME="cl100k_base"
+ARG BUILD_HASH=demo-build
+ARG UID=0
+ARG GID=0
+
+######## WebUI frontend ########
+FROM --platform=$BUILDPLATFORM node:22-alpine3.20 AS build
+ARG BUILD_HASH
+
+WORKDIR /app
+
+# to store git revision in build
+RUN apk add --no-cache git
+
+COPY package.json package-lock.json ./
+RUN npm ci
+
+COPY . .
+ENV APP_BUILD_HASH=${BUILD_HASH}
+RUN npm run build
+
+######## WebUI backend ########
+FROM python:3.11-slim-bookworm AS base
+
+# Use args
+ARG USE_CUDA
+ARG USE_OLLAMA
+ARG USE_CUDA_VER
+ARG USE_EMBEDDING_MODEL
+ARG USE_RERANKING_MODEL
+ARG UID
+ARG GID
+
+## Basis ##
+ENV ENV=prod \
+    PORT=8080 \
+    # pass build args to the build
+    USE_OLLAMA_DOCKER=$USE_OLLAMA \
+    USE_CUDA_DOCKER=$USE_CUDA \
+    USE_CUDA_DOCKER_VER=$USE_CUDA_VER \
+    USE_EMBEDDING_MODEL_DOCKER=$USE_EMBEDDING_MODEL \
+    USE_RERANKING_MODEL_DOCKER=$USE_RERANKING_MODEL
+
+## Build args ##
+ARG BUILD_HASH
+ENV WEBUI_BUILD_VERSION=${BUILD_HASH}
+
+# Install system dependencies
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+        pandoc \
+        netcat-openbsd \
+        curl \
+        build-essential \
+        unzip \
+        git \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install Python dependencies
+WORKDIR /app/backend
+
+# Copy requirements and install Python packages
+COPY ./backend/requirements.txt ./requirements.txt
+RUN pip3 install uv \
+    && uv pip install --system -r requirements.txt
+
+# Install additional dependencies based on build args
+RUN if [ "$USE_CUDA" = "true" ]; then \
+        pip3 install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/$USE_CUDA_VER --no-cache-dir; \
+    else \
+        pip3 install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cpu --no-cache-dir; \
+    fi
+
+# Create user and group
+RUN groupadd --gid $GID app \
+    && useradd --uid $UID --gid app --shell /bin/bash --create-home app
+
+# Create data directory and set permissions
+RUN mkdir -p /app/backend/data \
+    && chown -R $UID:$GID /app/backend/data
+
+# Copy built frontend files
+COPY --chown=$UID:$GID --from=build /app/build /app/build
+COPY --chown=$UID:$GID --from=build /app/CHANGELOG.md /app/CHANGELOG.md
+COPY --chown=$UID:$GID --from=build /app/package.json /app/package.json
+
+# Copy backend files
+COPY --chown=$UID:$GID ./backend .
+
+# Copy demo startup script
+COPY --chown=$UID:$GID ./backend/start-demo.sh ./start-demo.sh
+RUN chmod +x ./start-demo.sh
+
+EXPOSE 8080
+
+HEALTHCHECK CMD curl --silent --fail http://localhost:${PORT:-8080}/health | jq -ne 'input.status == true' || exit 1
+
+USER $UID:$GID
+
+# Demo mode environment variables
+ENV WEBUI_AUTH=False \
+    WEBUI_NAME="Open WebUI Demo" \
+    DEFAULT_USER_ROLE=admin \
+    DEMO_MODE=true \
+    DOCKER=true
+
+# Use demo startup script
+CMD [ "bash", "start-demo.sh"]

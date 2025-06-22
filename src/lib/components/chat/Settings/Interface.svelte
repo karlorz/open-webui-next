@@ -61,8 +61,8 @@
 	let stylizedPdfExport = true;
 
 	// Admin - Show Update Available Toast
-	let showUpdateToast = true;
-	let showChangelog = true;
+	let showUpdateToast = false;
+	let showChangelog = false;
 
 	let showEmojiInCall = false;
 	let voiceInterruption = false;
@@ -300,9 +300,9 @@
 		detectArtifacts = $settings?.detectArtifacts ?? true;
 		responseAutoCopy = $settings?.responseAutoCopy ?? false;
 
-		showUsername = $settings?.showUsername ?? false;
-		showUpdateToast = $settings?.showUpdateToast ?? true;
-		showChangelog = $settings?.showChangelog ?? true;
+		showUsername = $settings.showUsername ?? false;
+		showUpdateToast = $settings.showUpdateToast ?? false;
+		showChangelog = $settings.showChangelog ?? false;
 
 		showEmojiInCall = $settings?.showEmojiInCall ?? false;
 		voiceInterruption = $settings?.voiceInterruption ?? false;
