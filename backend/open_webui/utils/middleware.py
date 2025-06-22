@@ -859,7 +859,7 @@ async def process_chat_payload(request, form_data, user, metadata, model):
                 attached_files=attached_files,
                 message_id=metadata.get("message_id", ""),
             )
-            
+
             form_data["messages"] = add_or_update_user_message(
                 enhanced_prompt,
                 form_data["messages"],
