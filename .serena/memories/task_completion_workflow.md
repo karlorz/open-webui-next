@@ -3,6 +3,7 @@
 ## When a Development Task is Completed
 
 ### 1. Code Quality Checks
+
 ```bash
 # Format code
 npm run format          # Frontend formatting
@@ -17,6 +18,7 @@ npm run check          # TypeScript type checking
 ```
 
 ### 2. Testing
+
 ```bash
 # Run unit tests
 npm run test:frontend  # Frontend tests with Vitest
@@ -27,6 +29,7 @@ npm run cy:open        # Cypress e2e tests
 ```
 
 ### 3. Build Verification
+
 ```bash
 # Test production build
 npm run build          # Build frontend
@@ -37,6 +40,7 @@ cd backend && python -m uvicorn open_webui.main:app --host 0.0.0.0 --port 8080
 ```
 
 ### 4. Database Migrations (if schema changed)
+
 ```bash
 # Generate migration if database models were modified
 cd backend && alembic revision --autogenerate -m "description of changes"
@@ -46,12 +50,14 @@ cd backend && alembic upgrade head
 ```
 
 ### 5. Documentation Updates
+
 - Update README.md if new features added
 - Update API documentation if endpoints changed
 - Update configuration documentation if new env vars added
 - Update CHANGELOG.md following semantic versioning
 
 ### 6. Git Workflow
+
 ```bash
 # Stage changes
 git add .
@@ -60,7 +66,7 @@ git add .
 git commit -m "feat: add new feature description"
 # or
 git commit -m "fix: resolve bug description"
-# or  
+# or
 git commit -m "docs: update documentation"
 
 # Push changes
@@ -68,6 +74,7 @@ git push origin feature-branch
 ```
 
 ### 7. System Verification Commands (macOS)
+
 ```bash
 # Check system resources
 ps aux | grep open-webui  # Check if processes are running
@@ -81,12 +88,14 @@ docker logs open-webui    # Check container logs
 ```
 
 ### 8. Performance Verification
+
 - Check application startup time
 - Verify API response times
 - Test memory usage under load
 - Verify frontend bundle sizes are reasonable
 
 ### 9. Pre-deployment Checklist
+
 - [ ] All tests passing
 - [ ] Code properly formatted and linted
 - [ ] Documentation updated

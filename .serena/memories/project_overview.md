@@ -1,9 +1,11 @@
 # Open WebUI Project Overview
 
 ## Purpose
+
 Open WebUI is an extensible, feature-rich, and user-friendly self-hosted AI platform designed to operate entirely offline. It supports various LLM runners like Ollama and OpenAI-compatible APIs, with built-in inference engine for RAG, making it a powerful AI deployment solution.
 
 ## Key Features
+
 - Effortless setup with Docker or Kubernetes
 - Ollama/OpenAI API integration
 - Granular permissions and user groups
@@ -21,6 +23,7 @@ Open WebUI is an extensible, feature-rich, and user-friendly self-hosted AI plat
 - Plugin framework with Pipelines
 
 ## Tech Stack
+
 - **Backend**: Python 3.11+ with FastAPI
 - **Frontend**: SvelteKit with TypeScript
 - **Database**: SQLAlchemy with support for PostgreSQL, MySQL, SQLite
@@ -31,7 +34,9 @@ Open WebUI is an extensible, feature-rich, and user-friendly self-hosted AI plat
 - **Testing**: Pytest (backend), Vitest (frontend), Cypress (e2e)
 
 ## Architecture
+
 The project follows a modern full-stack architecture:
+
 - **Backend**: Python FastAPI application serving REST APIs and WebSocket connections
 - **Frontend**: SvelteKit SPA that communicates with the backend APIs
 - **Database Layer**: SQLAlchemy ORM with Alembic migrations

@@ -12,6 +12,7 @@ from pydantic import BaseModel
 
 from open_webui.env import SRC_LOG_LEVELS
 
+
 # Import necessary models for chat and file operations
 from open_webui.models.chats import Chats
 from open_webui.models.files import Files
@@ -237,6 +238,7 @@ def get_attached_files_from_message(
         )
         return attached_files
 
+
     except Exception as e:
         logger.error(f"Error getting files from message {message_id}: {str(e)}")
         return []
@@ -250,10 +252,12 @@ async def auto_prepare_message_files(
     Creates symbolic links in the Jupyter data directory pointing to the uploaded files.
     Falls back to copying files if symlinks don't work (e.g., Docker environments).
 
+
     Args:
         attached_files: List of file metadata dictionaries
         workspace_id: Unique workspace identifier (could be message_id or session_id)
         data_dir: Base data directory (default: "data")
+
 
     Returns:
         Dictionary with preparation results including success status, prepared files count, and any errors
@@ -291,12 +295,18 @@ async def auto_prepare_message_files(
             f"Using {method} method for file preparation (hardcoded for Docker compatibility)"
         )
 
+        logger.info(
+            f"Using {method} method for file preparation (hardcoded for Docker compatibility)"
+        )
+
         # Track successfully processed files to avoid duplicates
         processed_file_ids = set()
+
 
         for file_info in attached_files:
             file_id = file_info["id"]
             file_name = file_info["name"]
+
 
             try:
                 # Skip if already processed (deduplication)
@@ -305,7 +315,11 @@ async def auto_prepare_message_files(
                     result["skipped_files"].append(
                         {"name": file_name, "id": file_id, "reason": "duplicate"}
                     )
+                    result["skipped_files"].append(
+                        {"name": file_name, "id": file_id, "reason": "duplicate"}
+                    )
                     continue
+
 
                 # Get file from database
                 file_record = Files.get_file_by_id(file_id)
@@ -314,7 +328,11 @@ async def auto_prepare_message_files(
                     result["errors"].append(
                         f"File record not found: {file_name} (ID: {file_id})"
                     )
+                    result["errors"].append(
+                        f"File record not found: {file_name} (ID: {file_id})"
+                    )
                     continue
+
 
                 # Use the actual file path from the database
                 if not file_record.path:
@@ -322,12 +340,18 @@ async def auto_prepare_message_files(
                     result["errors"].append(
                         f"File path not found: {file_name} (ID: {file_id})"
                     )
+                    result["errors"].append(
+                        f"File path not found: {file_name} (ID: {file_id})"
+                    )
                     continue
+
 
                 # Get the actual file path (handles different storage providers)
                 from open_webui.storage.provider import Storage
 
+
                 source_file_path = Storage.get_file(file_record.path)
+
 
                 # Check if source file exists
                 if not os.path.exists(source_file_path):
@@ -364,12 +388,26 @@ async def auto_prepare_message_files(
                     }
                 )
 
+                result["prepared_files"].append(
+                    {
+                        "name": file_name,
+                        "id": file_id,
+                        "target_path": target_path,
+                        "source_path": source_file_path,
+                        "size": file_info.get("size"),
+                        "type": file_info.get("type"),
+                        "method": method,
+                    }
+                )
+
                 processed_file_ids.add(file_id)
+
 
             except Exception as e:
                 error_msg = f"Error preparing file {file_name}: {str(e)}"
                 logger.error(error_msg)
                 result["errors"].append(error_msg)
+
 
         # Set success if we prepared at least some files or if there were no errors
         result["success"] = (
@@ -384,6 +422,7 @@ async def auto_prepare_message_files(
         )
 
         return result
+
 
     except Exception as e:
         error_msg = (
@@ -474,6 +513,7 @@ class EnterpriseGatewayCodeExecutor:
             )
         else:
             self._auto_prepare_needed = False
+
 
         if self.base_url[-1] != "/":
             self.base_url += "/"
@@ -583,6 +623,9 @@ plt.rcParams['axes.unicode_minus'] = False
                 async with self.session.delete(
                     f"api/kernels/{self.kernel_id}", headers=self.headers
                 ) as response:
+                async with self.session.delete(
+                    f"api/kernels/{self.kernel_id}", headers=self.headers
+                ) as response:
                     response.raise_for_status()
                     logger.info(f"Closed kernel {self.kernel_id}")
             except Exception as err:
@@ -672,7 +715,9 @@ plt.rcParams['axes.unicode_minus'] = False
                 "KERNEL_USERNAME": self.username,
                 "KERNEL_ID": str(uuid.uuid4()),
             },
+            },
         }
+
 
         logger.info(f"Starting {self.kernel_name} kernel for user {self.username}")
         try:
@@ -791,6 +836,7 @@ plt.rcParams['axes.unicode_minus'] = False
                 "username": self.username,
                 "session": str(uuid.uuid4()),
                 "version": "5.4",
+                "version": "5.4",
             },
             "parent_header": {},
             "metadata": {},
@@ -801,12 +847,15 @@ plt.rcParams['axes.unicode_minus'] = False
                 "user_expressions": {},
                 "allow_stdin": False,
                 "stop_on_error": True,
+                "stop_on_error": True,
             },
             "buffers": [],
+            "channel": "shell",
             "channel": "shell",
         }
 
         await ws.send(json.dumps(request))
+
 
         # Parse responses
         stdout_content, stderr_content = "", ""
@@ -817,9 +866,11 @@ plt.rcParams['axes.unicode_minus'] = False
                 message = await asyncio.wait_for(ws.recv(), self.timeout)
                 response = json.loads(message)
 
+
                 # Check if this message is a response to our request
                 if response.get("parent_header", {}).get("msg_id") != msg_id:
                     continue
+
 
                 msg_type = response.get("msg_type")
 
@@ -891,6 +942,10 @@ plt.rcParams['axes.unicode_minus'] = False
 
 
 async def execute_code_jupyter(
+    base_url: str,
+    code: str,
+    token: str = "",
+    password: str = "",
     base_url: str,
     code: str,
     token: str = "",

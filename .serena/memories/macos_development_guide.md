@@ -1,6 +1,7 @@
 # macOS Development Environment Setup
 
 ## System Requirements
+
 - **Operating System**: macOS
 - **Python**: 3.11+ (required for backend)
 - **Node.js**: 18.13.0+ (required for frontend)
@@ -9,6 +10,7 @@
 ## macOS Specific Commands
 
 ### System Information
+
 ```bash
 # Check macOS version
 sw_vers
@@ -27,6 +29,7 @@ ps aux | grep open-webui
 ```
 
 ### Package Management
+
 ```bash
 # Install Homebrew (if not installed)
 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
@@ -45,6 +48,7 @@ brew install uv
 ```
 
 ### File System Operations
+
 ```bash
 # Navigate to project directory
 cd /path/to/open-webui-next
@@ -62,6 +66,7 @@ chmod +x backend/start.sh       # Make script executable
 ```
 
 ### Network and Ports
+
 ```bash
 # Check if port is in use
 lsof -i :8080                  # Check port 8080
@@ -72,6 +77,7 @@ kill -9 $(lsof -ti:8080)      # Kill process on port 8080
 ```
 
 ### Environment Management
+
 ```bash
 # Python virtual environment
 python3 -m venv venv
@@ -85,12 +91,13 @@ printenv | grep WEBUI
 ```
 
 ### Troubleshooting Commands
+
 ```bash
 # Check Python installation
 which python3
 python3 --version
 
-# Check Node.js installation  
+# Check Node.js installation
 which node
 node --version
 npm --version
@@ -109,6 +116,7 @@ find . -name "*.pyc" -delete
 ```
 
 ## Development Workflow on macOS
+
 1. Use Terminal or iTerm2 for command line operations
 2. Consider using VS Code or PyCharm for development
 3. Use Docker Desktop for containerized development

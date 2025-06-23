@@ -3,6 +3,7 @@
 ## Essential Commands for Development
 
 ### Backend Development
+
 ```bash
 # Install dependencies
 pip install -r backend/requirements.txt
@@ -28,6 +29,7 @@ pylint backend/
 ```
 
 ### Frontend Development
+
 ```bash
 # Install dependencies
 npm install
@@ -63,6 +65,7 @@ npm run i18n:parse
 ```
 
 ### Full Stack Commands
+
 ```bash
 # Format both frontend and backend
 npm run format && npm run format:backend
@@ -79,6 +82,7 @@ npm run cy:open
 ```
 
 ### Docker Development
+
 ```bash
 # Using Makefile
 make install        # docker-compose up -d
@@ -94,6 +98,7 @@ docker-compose logs -f
 ```
 
 ### Database Commands
+
 ```bash
 # Reset database
 rm backend/data/webui.db  # For SQLite

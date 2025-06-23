@@ -85,6 +85,10 @@ from open_webui.utils.code_interpreter import (
     execute_code_jupyter,
     generate_dynamic_code_interpreter_prompt,
 )
+from open_webui.utils.code_interpreter import (
+    execute_code_jupyter,
+    generate_dynamic_code_interpreter_prompt,
+)
 
 from open_webui.tasks import create_task
 
@@ -853,12 +857,14 @@ async def process_chat_payload(request, form_data, user, metadata, model):
             # Get attached files from the current message metadata
             attached_files = metadata.get("files", [])
 
+
             # Generate enhanced prompt with file information
             enhanced_prompt = generate_dynamic_code_interpreter_prompt(
                 base_prompt=base_prompt,
                 attached_files=attached_files,
                 message_id=metadata.get("message_id", ""),
             )
+
 
             form_data["messages"] = add_or_update_user_message(
                 enhanced_prompt,
